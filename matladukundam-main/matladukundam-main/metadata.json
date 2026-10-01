@@ -1,0 +1,6 @@
+{
+  "name": "Matladuko - Telugu Social Calling & Dating",
+  "description": "Production-ready Telugu stranger voice & video calling platform with avatar discovery, coin billing economy, WebRTC calling, and comprehensive admin dashboard.",
+  "requestFramePermissions": ["camera", "microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

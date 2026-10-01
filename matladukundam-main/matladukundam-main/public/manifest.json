@@ -1,0 +1,18 @@
+{
+  "name": "Matladuko - Telugu Social Calling",
+  "short_name": "Matladuko",
+  "description": "Telugu Stranger Voice & Video Calling with Avatar Privacy and Coin Economy",
+  "start_url": "/?view=mobile",
+  "display": "standalone",
+  "background_color": "#020617",
+  "theme_color": "#e11d48",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
