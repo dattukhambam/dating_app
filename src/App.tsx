@@ -20,6 +20,7 @@ import { MobileApp } from './components/mobile/MobileApp';
 import { AdminPanel } from './components/admin/AdminPanel';
 import { UserProfile } from './types';
 import { INITIAL_CURRENT_USER } from './data/mockDatabase';
+import { apiFetch } from './utils/apiConfig';
 
 export default function App() {
   // Production routing: Cleanly separate User Mobile Application and Admin Portal
@@ -60,7 +61,7 @@ export default function App() {
   const testSupabaseDb = async () => {
     setDbTesting(true);
     try {
-      const res = await fetch('/api/v1/db/test', { method: 'POST' });
+      const res = await apiFetch('/api/v1/db/test', { method: 'POST' });
       const data = await res.json();
       setDbInfo(data);
       if (data.success) {
@@ -77,7 +78,7 @@ export default function App() {
   };
 
   useEffect(() => {
-    fetch('/api/v1/db/status')
+    apiFetch('/api/v1/db/status')
       .then((r) => r.json())
       .then((data) => setDbInfo(data))
       .catch(() => {});
@@ -103,7 +104,7 @@ export default function App() {
   // Load current user profile from server
   const fetchCurrentUser = async () => {
     try {
-      const res = await fetch('/api/v1/users/me');
+      const res = await apiFetch('/api/v1/users/me');
       if (res.ok) {
         const data = await res.json();
         const userObj = data.user || (data.id ? data : null);

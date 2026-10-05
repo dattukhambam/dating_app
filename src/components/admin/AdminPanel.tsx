@@ -139,7 +139,7 @@ export const AdminPanel: React.FC = () => {
   const handleTestDb = async () => {
     setDbTesting(true);
     try {
-      const res = await fetch('/api/v1/db/test', { method: 'POST' });
+      const res = await apiFetch('/api/v1/db/test', { method: 'POST' });
       const data = await res.json();
       if (data.success) {
         showToast(`✅ Supabase PostgreSQL 17 Connected! Latency: ${data.latencyMs}ms | Tables: ${data.tablesCount} | Users: ${data.usersCount}`);
@@ -159,17 +159,17 @@ export const AdminPanel: React.FC = () => {
     try {
       const [dashRes, usersRes, liveRes, histRes, payRes, wdRes, repRes, cfgRes, admRes, auditRes, healthRes] =
         await Promise.all([
-          fetch('/api/v1/admin/dashboard').then((r) => r.json()),
-          fetch('/api/v1/admin/users').then((r) => r.json()),
-          fetch('/api/v1/admin/live-calls').then((r) => r.json()),
-          fetch('/api/v1/admin/call-history').then((r) => r.json()),
-          fetch('/api/v1/admin/payments').then((r) => r.json()),
-          fetch('/api/v1/admin/withdrawals').then((r) => r.json()),
-          fetch('/api/v1/admin/reports').then((r) => r.json()),
-          fetch('/api/v1/admin/configuration').then((r) => r.json()),
-          fetch('/api/v1/admin/admin-users').then((r) => r.json()),
-          fetch('/api/v1/admin/audit-logs').then((r) => r.json()),
-          fetch('/api/v1/admin/system-health').then((r) => r.json()),
+          apiFetch('/api/v1/admin/dashboard').then((r) => r.json()),
+          apiFetch('/api/v1/admin/users').then((r) => r.json()),
+          apiFetch('/api/v1/admin/live-calls').then((r) => r.json()),
+          apiFetch('/api/v1/admin/call-history').then((r) => r.json()),
+          apiFetch('/api/v1/admin/payments').then((r) => r.json()),
+          apiFetch('/api/v1/admin/withdrawals').then((r) => r.json()),
+          apiFetch('/api/v1/admin/reports').then((r) => r.json()),
+          apiFetch('/api/v1/admin/configuration').then((r) => r.json()),
+          apiFetch('/api/v1/admin/admin-users').then((r) => r.json()),
+          apiFetch('/api/v1/admin/audit-logs').then((r) => r.json()),
+          apiFetch('/api/v1/admin/system-health').then((r) => r.json()),
         ]);
 
       setDashboardData(dashRes);
@@ -268,7 +268,7 @@ export const AdminPanel: React.FC = () => {
 
   const handleSaveConfiguration = async () => {
     try {
-      const res = await fetch('/api/v1/admin/configuration', {
+      const res = await apiFetch('/api/v1/admin/configuration', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -293,7 +293,7 @@ export const AdminPanel: React.FC = () => {
 
   const handleAddPackage = async () => {
     try {
-      const res = await fetch('/api/v1/admin/packages', {
+      const res = await apiFetch('/api/v1/admin/packages', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
