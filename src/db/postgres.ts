@@ -208,47 +208,7 @@ export async function seedInitialDataIfEmpty(): Promise<{ seeded: boolean; messa
       ON CONFLICT (id) DO NOTHING;
     `);
 
-    // 6. Seed Demo Users if users table is empty
-    const userCountRes = await pool.query('SELECT count(*) AS cnt FROM users');
-    const existingUsers = parseInt(userCountRes.rows[0]?.cnt || '0', 10);
-
-    if (existingUsers === 0) {
-      for (const u of INITIAL_USERS) {
-        // Users table
-        await pool.query(`
-          INSERT INTO users (id, phone_number, status)
-          VALUES ($1, $2, $3)
-          ON CONFLICT (id) DO NOTHING;
-        `, [u.id, u.phoneNumber || `+9198765${Math.floor(10000 + Math.random() * 90000)}`, u.status === 'Active' ? 'Active' : 'Suspended']);
-
-        // User profiles
-        await pool.query(`
-          INSERT INTO user_profiles (
-            user_id, display_name, gender, date_of_birth, age,
-            preferred_language_id, avatar_id, bio, is_creator_eligible
-          )
-          VALUES ($1, $2, $3, '1998-05-15', $4, 'te', $5, $6, $7)
-          ON CONFLICT (user_id) DO NOTHING;
-        `, [
-          u.id,
-          u.displayName,
-          u.gender === 'Female' ? 'Female' : 'Male',
-          u.age || 24,
-          u.avatarId,
-          u.bio || 'Telugu Stranger Calling App user',
-          true
-        ]);
-
-        // User wallet
-        await pool.query(`
-          INSERT INTO wallets (user_id, balance_coins, reserved_coins)
-          VALUES ($1, $2, 0)
-          ON CONFLICT (user_id) DO NOTHING;
-        `, [u.id, u.coinsBalance || 100]);
-      }
-    }
-
-    return { seeded: true, message: 'Initial data seeded successfully into PostgreSQL' };
+    return { seeded: true, message: 'Baseline lookup data (languages, avatars, packages, config) verified in PostgreSQL' };
   } catch (err: any) {
     console.error('Error seeding initial data to PostgreSQL:', err);
     return { seeded: false, message: err.message };

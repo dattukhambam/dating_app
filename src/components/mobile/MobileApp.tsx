@@ -94,13 +94,51 @@ export const MobileApp: React.FC<MobileAppProps> = ({
   // Real-time Authentication & Session State
   const getStoredUser = (): UserProfile => {
     try {
-      const stored = sessionStorage.getItem('matladuko_user_profile') || localStorage.getItem('matladuko_user_profile');
-      if (stored) return JSON.parse(stored);
+      const stored = localStorage.getItem('matladuko_user_profile') || sessionStorage.getItem('matladuko_user_profile');
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (parsed.id === 'USR_RAHUL' || parsed.id === 'USR_SWAPNA' || parsed.id?.startsWith('USR100')) {
+          localStorage.removeItem('matladuko_user_profile');
+          localStorage.removeItem('matladuko_user_logged_in');
+          sessionStorage.removeItem('matladuko_user_profile');
+          sessionStorage.removeItem('matladuko_user_logged_in');
+        } else if (parsed.id && parsed.phoneNumber) {
+          return parsed;
+        }
+      }
     } catch {}
-    return initialUser;
+    return {
+      id: '',
+      phoneNumber: '',
+      displayName: 'User',
+      gender: 'Male',
+      dob: '2000-01-01',
+      age: 24,
+      preferredLanguage: 'Telugu',
+      secondaryLanguages: ['English'],
+      avatarId: 'av_aman',
+      avatarUrl: PREDEFINED_AVATARS[0].svgUrl,
+      status: 'Active',
+      isOnline: false,
+      isBusy: false,
+      coinsBalance: 500,
+      totalCallsMade: 0,
+      totalCallsReceived: 0,
+      totalCallDurationMins: 0,
+      earnedCoins: 0,
+      withdrawnINR: 0,
+      audioRatePerMin: 10,
+      videoRatePerMin: 20,
+      joinedDate: 'Just now',
+      lastActive: 'Just now',
+    };
   };
 
-  const isPreviouslyLoggedIn = typeof window !== 'undefined' && sessionStorage.getItem('matladuko_user_logged_in') === 'true';
+  const isPreviouslyLoggedIn = typeof window !== 'undefined' && Boolean(
+    (localStorage.getItem('matladuko_user_logged_in') === 'true' || sessionStorage.getItem('matladuko_user_logged_in') === 'true') &&
+    getStoredUser().id &&
+    getStoredUser().phoneNumber
+  );
   const [isLoggedIn, setIsLoggedIn] = useState<boolean>(isPreviouslyLoggedIn);
   const [currentScreen, setCurrentScreen] = useState<MobileScreen>(isPreviouslyLoggedIn ? 'online_users' : 'login');
   const [user, setUser] = useState<UserProfile>(getStoredUser);
@@ -167,6 +205,7 @@ export const MobileApp: React.FC<MobileAppProps> = ({
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   const callTimerRef = useRef<any>(null);
+  const ringTimeoutRef = useRef<any>(null);
 
   // WebRTC Real-time Media & Signaling States
   const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
@@ -180,21 +219,39 @@ export const MobileApp: React.FC<MobileAppProps> = ({
     setTimeout(() => setToastMessage(null), 3500);
   };
 
+  // Bind local video stream whenever it updates or screen switches
+  useEffect(() => {
+    if (localVideoRef.current && localStream) {
+      localVideoRef.current.srcObject = localStream;
+      localVideoRef.current.play().catch(() => {});
+    }
+  }, [localStream, currentScreen]);
+
+  // Bind remote video stream whenever it updates or screen switches
+  useEffect(() => {
+    if (remoteVideoRef.current && remoteStream) {
+      remoteVideoRef.current.srcObject = remoteStream;
+      remoteVideoRef.current.play().catch(() => {});
+    }
+  }, [remoteStream, currentScreen]);
+
   // Initialize WebRTC Signaling connection
   useEffect(() => {
-    if (!isLoggedIn) return;
+    if (!isLoggedIn || !user.id) return;
 
     const mgr = new MatladukoWebRtcManager({
       onRemoteStream: (stream) => {
         setRemoteStream(stream);
         if (remoteVideoRef.current) {
           remoteVideoRef.current.srcObject = stream;
+          remoteVideoRef.current.play().catch(() => {});
         }
       },
       onLocalStream: (stream) => {
         setLocalStream(stream);
         if (localVideoRef.current) {
           localVideoRef.current.srcObject = stream;
+          localVideoRef.current.play().catch(() => {});
         }
       },
       onIncomingCall: (callData) => {
@@ -208,15 +265,26 @@ export const MobileApp: React.FC<MobileAppProps> = ({
       },
       onCallStateChange: (state) => {
         if (state === 'connected') {
+          if (ringTimeoutRef.current) clearTimeout(ringTimeoutRef.current);
           soundEffects.stopRingtone();
           soundEffects.playConnectChime();
-          showToast('WebRTC Connected! Real-time audio/video live.');
+          setActiveCall((prev) => (prev ? { ...prev, status: 'connected', startTime: Date.now() } : null));
+          setCallDurationSec(0);
+          showToast('Live WebRTC P2P Call Connected!');
         } else if (state === 'ended') {
+          if (ringTimeoutRef.current) clearTimeout(ringTimeoutRef.current);
           soundEffects.stopRingtone();
           soundEffects.playEndChime();
           setRemoteStream(null);
           setLocalStream(null);
+          setActiveCall(null);
+          setIncomingCallData(null);
+          setCurrentScreen('online_users');
+          fetchUsers();
         }
+      },
+      onPresenceUpdate: () => {
+        fetchUsers();
       },
       onAudioLevel: (db) => {
         setAmbientNoiseDb(db);
@@ -226,15 +294,15 @@ export const MobileApp: React.FC<MobileAppProps> = ({
       },
     });
 
-    mgr.connectSignaling(user.id, user.displayName, user.avatarUrl);
+    mgr.connectSignaling(user.id, user.displayName, user.avatarUrl, user.gender);
     webrtcManagerRef.current = mgr;
 
     return () => {
       mgr.cleanup();
     };
-  }, [isLoggedIn, user.id, user.displayName, user.avatarUrl]);
+  }, [isLoggedIn, user.id, user.displayName, user.avatarUrl, user.gender]);
 
-  // Fetch online users from backend with instant offline fallback
+  // Fetch real registered online users from backend
   const fetchUsers = async () => {
     try {
       const res = await apiFetch(
@@ -249,19 +317,8 @@ export const MobileApp: React.FC<MobileAppProps> = ({
         return;
       }
     } catch (err) {
-      console.warn('Network offline or APK relative path - using initial users list');
+      console.warn('Network offline or error fetching online users');
     }
-    // Fallback for APK offline or standalone mode: STRICT GENDER MATCHING
-    let filtered = [...INITIAL_USERS].filter((u) => u.isOnline);
-    if (user.gender === 'Male') {
-      filtered = filtered.filter((u) => u.gender === 'Female');
-    } else if (user.gender === 'Female') {
-      filtered = filtered.filter((u) => u.gender === 'Male');
-    }
-    if (languageFilter !== 'All') {
-      filtered = filtered.filter((u) => u.preferredLanguage === languageFilter);
-    }
-    setOnlineList(filtered);
   };
 
   // Fetch wallet & packages with fallback
@@ -668,14 +725,19 @@ export const MobileApp: React.FC<MobileAppProps> = ({
     try {
       const res = await apiFetch('/api/v1/calls/initiate', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ calleeId: callee.id, type }),
+        headers: { 'Content-Type': 'application/json', 'x-user-id': user.id },
+        body: JSON.stringify({ callerId: user.id, calleeId: callee.id, type }),
       });
       if (res.ok) {
         const data = await res.json();
         if (data.session) {
           session = data.session;
         }
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        showToast(errData.error || 'Could not initiate call');
+        soundEffects.stopRingtone();
+        return;
       }
     } catch (e) {
       console.warn('Network call initiate offline fallback:', e);
@@ -691,104 +753,47 @@ export const MobileApp: React.FC<MobileAppProps> = ({
         id: user.id,
         displayName: user.displayName,
         avatarUrl: user.avatarUrl,
+        gender: user.gender,
       });
     } catch (rtcErr) {
       console.warn('WebRTC start error:', rtcErr);
     }
 
-    // Callee accepts after realistic 3.5 seconds ringing simulation
-    setTimeout(async () => {
+    // Start 45-second timeout if other user does not answer
+    if (ringTimeoutRef.current) clearTimeout(ringTimeoutRef.current);
+    ringTimeoutRef.current = setTimeout(() => {
       soundEffects.stopRingtone();
-      soundEffects.playConnectChime();
-
-      try {
-        const connectRes = await apiFetch(`/api/v1/calls/${session.id}/connect`, { method: 'POST' });
-        if (connectRes.ok) {
-          const cData = await connectRes.json();
-          setActiveCall(cData.session);
-        } else {
-          setActiveCall((prev) => (prev ? { ...prev, status: 'connected', startTime: Date.now() } : null));
-        }
-      } catch (e) {
-        setActiveCall((prev) => (prev ? { ...prev, status: 'connected', startTime: Date.now() } : null));
-      }
-      showToast(`Connected with ${callee.displayName} in Telugu!`);
-    }, 3500);
+      soundEffects.playEndChime();
+      webrtcManagerRef.current?.endCall('No answer');
+      setActiveCall(null);
+      setCurrentScreen('online_users');
+      showToast(`${callee.displayName} కాల్ లిఫ్ట్ చేయలేదు (User did not answer).`);
+    }, 45000);
   };
 
   const handleRandomCall = async () => {
+    // Select suitable random user of opposite gender who is online and not busy
+    const available = onlineList.filter(
+      (u) => (user.gender === 'Male' ? u.gender === 'Female' : u.gender === 'Male') && u.id !== user.id && !u.isBusy
+    );
+
+    if (available.length === 0) {
+      showToast(lang === 'te' ? 'ఈ సమయంలో సరిపడే ఆన్‌లైన్ యూజర్లు ఎవరూ లేరు.' : 'No matched users online right now.');
+      return;
+    }
+
     setRandomMatchingActive(true);
     soundEffects.startRingtone();
 
-    // Select suitable random female user
-    const available = onlineList.filter((u) => u.gender === 'Female' && u.id !== user.id);
-    const randomCallee = available[Math.floor(Math.random() * available.length)] || onlineList[0] || INITIAL_USERS[0];
-
-    const fallbackSession: CallSession = {
-      id: `CALL_RND_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-      callerId: user.id,
-      callerName: user.displayName,
-      callerAvatar: user.avatarUrl,
-      calleeId: randomCallee.id,
-      calleeName: randomCallee.displayName,
-      calleeAvatar: randomCallee.avatarUrl,
-      type: 'audio',
-      status: 'ringing',
-      startTime: null,
-      endTime: null,
-      durationSeconds: 0,
-      billedCoins: 0,
-      audioRate: randomCallee.audioRatePerMin || 10,
-      videoRate: randomCallee.videoRatePerMin || 20,
-      creatorCoinsEarned: 0,
-      platformCoinsEarned: 0,
-      coinToInrRate: 0.2,
-      createdAt: Date.now(),
-    };
-
-    let session: CallSession = fallbackSession;
-
-    try {
-      const res = await apiFetch('/api/v1/calls/random-match', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type: 'audio', language: 'Telugu' }),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.session) {
-          session = data.session;
-        }
-      }
-    } catch (e) {
-      console.warn('Random match API fallback:', e);
-    }
-
-    setTimeout(async () => {
-      soundEffects.stopRingtone();
-      soundEffects.playConnectChime();
+    const randomCallee = available[Math.floor(Math.random() * available.length)];
+    setTimeout(() => {
       setRandomMatchingActive(false);
-
-      setActiveCall(session);
-      setCallDurationSec(0);
-      setCurrentScreen('audio_call');
-
-      try {
-        const connectRes = await apiFetch(`/api/v1/calls/${session.id}/connect`, { method: 'POST' });
-        if (connectRes.ok) {
-          const cData = await connectRes.json();
-          setActiveCall(cData.session);
-        } else {
-          setActiveCall((prev) => (prev ? { ...prev, status: 'connected', startTime: Date.now() } : null));
-        }
-      } catch (e) {
-        setActiveCall((prev) => (prev ? { ...prev, status: 'connected', startTime: Date.now() } : null));
-      }
-      showToast(`Connected with ${session.calleeName} in Telugu!`);
-    }, 2500);
+      handleInitiateCall(randomCallee, 'audio');
+    }, 1200);
   };
 
   const handleEndActiveCall = async () => {
+    if (ringTimeoutRef.current) clearTimeout(ringTimeoutRef.current);
     if (!activeCall) return;
     soundEffects.stopRingtone();
     soundEffects.playEndChime();
@@ -1407,26 +1412,38 @@ export const MobileApp: React.FC<MobileAppProps> = ({
                 </p>
               </div>
               <div className="flex items-center space-x-2">
-                {user.gender === 'Female' && (
-                  <button
-                    onClick={handleIncomingDemoCall}
-                    title="టెస్ట్ ఇన్ కమింగ్ కాల్ లిఫ్ట్ చేయండి"
-                    className="px-2 py-1 rounded-full bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 text-[10px] font-bold flex items-center space-x-1 animate-pulse"
-                  >
-                    <Phone className="w-3 h-3 text-emerald-400" />
-                    <span>కాల్ టెస్ట్</span>
-                  </button>
-                )}
-                {user.gender === 'Male' && (
-                  <button
-                    onClick={handleIncomingDemoCall}
-                    title="Simulate Incoming Call"
-                    className="px-2 py-1 rounded-full bg-rose-500/20 border border-rose-500/40 text-rose-300 text-[10px] font-bold flex items-center space-x-1"
-                  >
-                    <Phone className="w-3 h-3 text-rose-400" />
-                    <span>టెస్ట్ రింగ్</span>
-                  </button>
-                )}
+                <div className="flex items-center space-x-1 px-2.5 py-1 rounded-full bg-amber-500/10 border border-amber-500/20 text-amber-400 text-xs font-bold">
+                  <Coins className="w-3.5 h-3.5 text-amber-400" />
+                  <span>{user.coinsBalance}</span>
+                </div>
+                <button
+                  onClick={fetchUsers}
+                  title="రీఫ్రెష్ చేయండి"
+                  className="p-1.5 rounded-full bg-slate-800/80 text-slate-300 hover:text-white border border-slate-700 transition"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                </button>
+                <button
+                  onClick={() => {
+                    try {
+                      localStorage.removeItem('matladuko_user_logged_in');
+                      localStorage.removeItem('matladuko_user_profile');
+                      sessionStorage.removeItem('matladuko_user_logged_in');
+                      sessionStorage.removeItem('matladuko_user_profile');
+                      webrtcManagerRef.current?.cleanup();
+                    } catch {}
+                    setIsLoggedIn(false);
+                    setUser(getStoredUser());
+                    setInputPhone('+91');
+                    setCurrentScreen('login');
+                    showToast(lang === 'te' ? 'లాగౌట్ అయ్యారు.' : 'Logged out.');
+                  }}
+                  title="లాగౌట్ (Log Out)"
+                  className="px-2.5 py-1 rounded-full bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/30 text-[10px] font-bold flex items-center space-x-1 transition active:scale-95"
+                >
+                  <LogOut className="w-3 h-3 text-rose-400" />
+                  <span>{lang === 'te' ? 'లాగౌట్' : 'Logout'}</span>
+                </button>
               </div>
             </div>
 
@@ -1827,11 +1844,17 @@ export const MobileApp: React.FC<MobileAppProps> = ({
               onOpenAudioSettings={() => setIsAudioSettingsOpen(true)}
             />
 
-            {/* Remote Callee Video / Stream */}
+            {/* Remote Peer Video / Stream */}
             <div className="relative flex-1 my-3 rounded-2xl bg-gradient-to-b from-slate-900 to-indigo-950/40 border border-slate-800 flex flex-col items-center justify-center overflow-hidden">
               {remoteStream ? (
                 <video
-                  ref={remoteVideoRef}
+                  ref={(el) => {
+                    remoteVideoRef.current = el;
+                    if (el && remoteStream && el.srcObject !== remoteStream) {
+                      el.srcObject = remoteStream;
+                      el.play().catch(() => {});
+                    }
+                  }}
                   autoPlay
                   playsInline
                   className="w-full h-full object-cover"
@@ -1839,12 +1862,16 @@ export const MobileApp: React.FC<MobileAppProps> = ({
               ) : (
                 <div className="flex flex-col items-center justify-center">
                   <img
-                    src={activeCall.calleeAvatar}
-                    alt={activeCall.calleeName}
+                    src={activeCall.callerId === user.id ? activeCall.calleeAvatar : activeCall.callerAvatar}
+                    alt={activeCall.callerId === user.id ? activeCall.calleeName : activeCall.callerName}
                     className="w-28 h-28 rounded-full border-4 border-rose-500/40 shadow-2xl animate-pulse"
                   />
-                  <h3 className="text-base font-bold text-white mt-3">{activeCall.calleeName}</h3>
-                  <p className="text-xs text-rose-400 font-medium">Telugu Video Connection Live</p>
+                  <h3 className="text-base font-bold text-white mt-3">
+                    {activeCall.callerId === user.id ? activeCall.calleeName : activeCall.callerName}
+                  </h3>
+                  <p className="text-xs text-rose-400 font-medium">
+                    {activeCall.status === 'ringing' ? 'కాల్ రింగ్ అవుతోంది... (Ringing)' : 'Live WebRTC Video Connected'}
+                  </p>
                 </div>
               )}
 
@@ -1860,7 +1887,13 @@ export const MobileApp: React.FC<MobileAppProps> = ({
                   <CameraOff className="w-6 h-6 text-slate-600" />
                 ) : localStream ? (
                   <video
-                    ref={localVideoRef}
+                    ref={(el) => {
+                      localVideoRef.current = el;
+                      if (el && localStream && el.srcObject !== localStream) {
+                        el.srcObject = localStream;
+                        el.play().catch(() => {});
+                      }
+                    }}
                     autoPlay
                     playsInline
                     muted

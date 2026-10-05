@@ -41,53 +41,82 @@ import {
 import { PREDEFINED_AVATARS } from './src/data/avatars';
 
 // State Store in-memory for server session
-let users: UserProfile[] = JSON.parse(JSON.stringify(INITIAL_USERS));
-let currentUser: UserProfile = JSON.parse(JSON.stringify(INITIAL_CURRENT_USER));
+let users: UserProfile[] = [];
+let currentUser: UserProfile | null = null;
 let config: SystemConfiguration = JSON.parse(JSON.stringify(INITIAL_CONFIG));
 let configHistory: ConfigurationHistoryItem[] = [
   {
     id: 'HIST_01',
     version: 1,
     config: JSON.parse(JSON.stringify(INITIAL_CONFIG)),
-    changedBy: 'dinesh@matladuko.com',
+    changedBy: 'admin@matladuko.com',
     timestamp: new Date().toISOString(),
     reason: 'Initial production system baseline',
   },
 ];
 let coinPackages: CoinPackage[] = JSON.parse(JSON.stringify(INITIAL_COIN_PACKAGES));
-let liveCalls: CallSession[] = JSON.parse(JSON.stringify(INITIAL_LIVE_CALLS));
-let callHistory: CallSession[] = JSON.parse(JSON.stringify(INITIAL_CALL_HISTORY));
-let payments: PaymentOrder[] = JSON.parse(JSON.stringify(INITIAL_PAYMENTS));
-let withdrawals: WithdrawalRequest[] = JSON.parse(JSON.stringify(INITIAL_WITHDRAWALS));
-let reports: UserReport[] = JSON.parse(JSON.stringify(INITIAL_REPORTS));
+let liveCalls: CallSession[] = [];
+let callHistory: CallSession[] = [];
+let payments: PaymentOrder[] = [];
+let withdrawals: WithdrawalRequest[] = [];
+let reports: UserReport[] = [];
 let adminUsers: AdminUser[] = JSON.parse(JSON.stringify(INITIAL_ADMIN_USERS));
 let auditLogs: AdminAuditLog[] = JSON.parse(JSON.stringify(INITIAL_AUDIT_LOGS));
 
-let walletTransactions: WalletTransaction[] = [
-  {
-    id: 'TX_101',
-    userId: currentUser.id,
-    type: 'CREDIT_PURCHASE',
-    amountCoins: 500,
-    balanceAfter: 500,
-    referenceId: 'PAY_INIT_1',
-    description: 'Purchased 500 Coins (UPI)',
-    createdAt: '18 Sep 2026 08:30',
-  },
-  {
-    id: 'TX_102',
-    userId: currentUser.id,
-    type: 'DEBIT_CALL',
-    amountCoins: -250,
-    balanceAfter: 250,
-    referenceId: 'CALL_HIST_901',
-    description: 'Video Call to Neha (12 mins)',
-    createdAt: '18 Sep 2026 09:10',
-  },
-];
+let walletTransactions: WalletTransaction[] = [];
 
-let blockedUserIds: string[] = ['USR1007']; // Rahul is blocked
-let favoritesUserIds: string[] = ['USR1001', 'USR1002', 'USR1003', 'USR1004', 'USR1005'];
+let blockedUserIds: string[] = [];
+let favoritesUserIds: string[] = [];
+
+// Load registered users from database if available
+async function loadUsersFromDb() {
+  try {
+    const res = await pool.query(`
+      SELECT u.id, u.phone_number, p.display_name, p.gender, p.age, p.date_of_birth,
+             p.preferred_language_id, p.avatar_id, a.svg_url, COALESCE(w.balance_coins, 500) as balance_coins,
+             u.status
+      FROM users u
+      JOIN user_profiles p ON u.id = p.user_id
+      LEFT JOIN avatars a ON p.avatar_id = a.id
+      LEFT JOIN wallets w ON u.id = w.user_id
+    `);
+    if (res.rows && res.rows.length > 0) {
+      for (const r of res.rows) {
+        if (!users.some((existing) => existing.id === r.id || existing.phoneNumber === r.phone_number)) {
+          users.push({
+            id: r.id,
+            phoneNumber: r.phone_number,
+            displayName: r.display_name || 'User',
+            gender: r.gender === 'Female' ? 'Female' : 'Male',
+            dob: r.date_of_birth ? new Date(r.date_of_birth).toISOString().split('T')[0] : '2000-01-01',
+            age: r.age || 24,
+            preferredLanguage: r.preferred_language_id === 'en' ? 'English' : 'Telugu',
+            secondaryLanguages: ['English'],
+            avatarId: r.avatar_id || 'av_aman',
+            avatarUrl: r.svg_url || PREDEFINED_AVATARS[0].svgUrl,
+            status: r.status || 'Active',
+            isOnline: false,
+            isBusy: false,
+            coinsBalance: Number(r.balance_coins) || 500,
+            totalCallsMade: 0,
+            totalCallsReceived: 0,
+            totalCallDurationMins: 0,
+            earnedCoins: 0,
+            withdrawnINR: 0,
+            audioRatePerMin: 10,
+            videoRatePerMin: 20,
+            joinedDate: 'Registered',
+            lastActive: 'Offline',
+            bio: '',
+          });
+        }
+      }
+      console.log(`Loaded ${users.length} registered real users from database.`);
+    }
+  } catch (err: any) {
+    console.warn('DB load users notice:', err.message);
+  }
+}
 
 async function startServer() {
   const app = express();
@@ -160,6 +189,52 @@ async function startServer() {
       });
     }
 
+    // Check DB for existing user if not currently in memory
+    try {
+      pool.query(`
+        SELECT u.id, u.phone_number, p.display_name, p.gender, p.age, p.date_of_birth,
+               p.preferred_language_id, p.avatar_id, a.svg_url, COALESCE(w.balance_coins, 500) as balance_coins,
+               u.status
+        FROM users u
+        JOIN user_profiles p ON u.id = p.user_id
+        LEFT JOIN avatars a ON p.avatar_id = a.id
+        LEFT JOIN wallets w ON u.id = w.user_id
+        WHERE u.phone_number = $1
+      `, [normalizedPhone]).then((dbRes) => {
+        if (dbRes.rows && dbRes.rows.length > 0) {
+          const r = dbRes.rows[0];
+          const loadedUser: UserProfile = {
+            id: r.id,
+            phoneNumber: r.phone_number,
+            displayName: r.display_name || 'User',
+            gender: r.gender === 'Female' ? 'Female' : 'Male',
+            dob: r.date_of_birth ? new Date(r.date_of_birth).toISOString().split('T')[0] : '2000-01-01',
+            age: r.age || 24,
+            preferredLanguage: r.preferred_language_id === 'en' ? 'English' : 'Telugu',
+            secondaryLanguages: ['English'],
+            avatarId: r.avatar_id || 'av_aman',
+            avatarUrl: r.svg_url || PREDEFINED_AVATARS[0].svgUrl,
+            status: r.status || 'Active',
+            isOnline: true,
+            isBusy: false,
+            coinsBalance: Number(r.balance_coins) || 500,
+            totalCallsMade: 0,
+            totalCallsReceived: 0,
+            totalCallDurationMins: 0,
+            earnedCoins: 0,
+            withdrawnINR: 0,
+            audioRatePerMin: 10,
+            videoRatePerMin: 20,
+            joinedDate: 'Registered',
+            lastActive: 'Just now',
+            bio: '',
+          };
+          users.unshift(loadedUser);
+          currentUser = loadedUser;
+        }
+      }).catch(() => {});
+    } catch {}
+
     // New user detected - request profile registration
     return res.json({
       success: true,
@@ -169,7 +244,7 @@ async function startServer() {
     });
   });
 
-  app.post('/api/v1/auth/register', (req, res) => {
+  app.post('/api/v1/auth/register', async (req, res) => {
     const {
       phoneNumber,
       displayName,
@@ -216,7 +291,7 @@ async function startServer() {
       status: 'Active',
       isOnline: true,
       isBusy: false,
-      coinsBalance: userGender === 'Female' ? 200 : 500,
+      coinsBalance: 500, // 500 free welcome coins to call and test immediately
       totalCallsMade: 0,
       totalCallsReceived: 0,
       totalCallDurationMins: 0,
@@ -233,26 +308,42 @@ async function startServer() {
     users.unshift(newUser);
     currentUser = newUser;
 
-    // Persist to PostgreSQL if connected
+    // Persist to PostgreSQL with proper relational schema
     try {
-      dbQuery(`
-        INSERT INTO users (id, phone_number, display_name, gender, age, preferred_language, avatar_id, avatar_url, coins_balance, status, is_online)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, TRUE)
-        ON CONFLICT (phone_number) DO UPDATE
-        SET display_name = EXCLUDED.display_name, gender = EXCLUDED.gender, avatar_id = EXCLUDED.avatar_id, is_online = TRUE;
+      await dbQuery(`
+        INSERT INTO users (id, phone_number, status)
+        VALUES ($1, $2, 'Active')
+        ON CONFLICT (id) DO UPDATE SET phone_number = EXCLUDED.phone_number;
+      `, [newUser.id, newUser.phoneNumber]);
+
+      await dbQuery(`
+        INSERT INTO user_profiles (
+          user_id, display_name, gender, date_of_birth, age,
+          preferred_language_id, avatar_id, bio, is_creator_eligible
+        )
+        VALUES ($1, $2, $3, $4, $5, 'te', $6, $7, true)
+        ON CONFLICT (user_id) DO UPDATE SET
+          display_name = EXCLUDED.display_name,
+          gender = EXCLUDED.gender,
+          avatar_id = EXCLUDED.avatar_id;
       `, [
         newUser.id,
-        newUser.phoneNumber,
         newUser.displayName,
         newUser.gender,
+        newUser.dob,
         newUser.age,
-        newUser.preferredLanguage,
         newUser.avatarId,
-        newUser.avatarUrl,
-        newUser.coinsBalance,
-        newUser.status,
-      ]).catch(() => {});
-    } catch {}
+        newUser.bio,
+      ]);
+
+      await dbQuery(`
+        INSERT INTO wallets (user_id, balance_coins, reserved_coins)
+        VALUES ($1, $2, 0)
+        ON CONFLICT (user_id) DO UPDATE SET balance_coins = EXCLUDED.balance_coins;
+      `, [newUser.id, newUser.coinsBalance]);
+    } catch (e: any) {
+      console.warn('PostgreSQL user persistence notice:', e.message);
+    }
 
     return res.json({
       success: true,
@@ -278,12 +369,16 @@ async function startServer() {
         return res.json({ success: true, user: found, ...found });
       }
     }
-    res.json({ success: true, user: currentUser, ...currentUser });
+    if (currentUser) {
+      return res.json({ success: true, user: currentUser, ...currentUser });
+    }
+    return res.status(401).json({ error: 'User not logged in', user: null });
   });
 
   app.put('/api/v1/users/me', (req, res) => {
-    const userId = (req.headers['x-user-id'] as string) || (req.body.userId as string) || currentUser.id;
+    const userId = (req.headers['x-user-id'] as string) || (req.body.userId as string) || (currentUser ? currentUser.id : '');
     let target = users.find((u) => u.id === userId) || currentUser;
+    if (!target) return res.status(404).json({ error: 'User not found' });
     const { displayName, gender, dob, preferredLanguage, avatarId } = req.body;
     if (displayName) target.displayName = displayName;
     if (gender) target.gender = gender;
@@ -322,12 +417,12 @@ async function startServer() {
     // STRICT GENDER MATCHING:
     // Male user -> STRICTLY Online Female users only!
     // Female user -> STRICTLY Online Male callers only!
-    if (myUser?.gender === 'Male') {
+    if (gender && gender !== 'All') {
+      list = list.filter((u) => u.gender.toLowerCase() === String(gender).toLowerCase());
+    } else if (myUser?.gender === 'Male') {
       list = list.filter((u) => u.gender === 'Female');
     } else if (myUser?.gender === 'Female') {
       list = list.filter((u) => u.gender === 'Male');
-    } else if (gender && gender !== 'All') {
-      list = list.filter((u) => u.gender.toLowerCase() === String(gender).toLowerCase());
     }
 
     if (tab === 'favorites') {
@@ -391,11 +486,13 @@ async function startServer() {
 
   app.post('/api/v1/reports', (req, res) => {
     const { reportedUserId, reason, notes } = req.body;
+    const callerId = (req.headers['x-user-id'] as string) || (currentUser ? currentUser.id : 'anonymous');
+    const callerUser = users.find((u) => u.id === callerId) || currentUser;
     const reportedUser = users.find((u) => u.id === reportedUserId);
     const newReport: UserReport = {
       id: 'REP_' + Math.floor(100 + Math.random() * 900),
-      reporterId: currentUser.id,
-      reporterName: currentUser.displayName,
+      reporterId: callerId,
+      reporterName: callerUser ? callerUser.displayName : 'User',
       reportedUserId,
       reportedUserName: reportedUser ? reportedUser.displayName : 'Unknown',
       reason,
@@ -411,16 +508,24 @@ async function startServer() {
   // 3. WEBRTC & CALLING SESSIONS + SERVER-AUTHORITATIVE BILLING
   // -------------------------------------------------------------------------
   app.post('/api/v1/calls/initiate', (req, res) => {
-    const { calleeId, type } = req.body as { calleeId: string; type: 'audio' | 'video' };
+    const { calleeId, type, callerId } = req.body as { calleeId: string; type: 'audio' | 'video'; callerId?: string };
+    const resolvedCallerId = callerId || (req.headers['x-user-id'] as string) || (currentUser ? currentUser.id : '');
+    const caller = users.find((u) => u.id === resolvedCallerId) || currentUser;
+    if (!caller) return res.status(401).json({ error: 'Caller profile not found. Please log in.' });
+
     const callee = users.find((u) => u.id === calleeId);
     if (!callee) return res.status(404).json({ error: 'Target user not found' });
+
+    if (caller.id === callee.id) {
+      return res.status(400).json({ error: 'Cannot call yourself. Please choose another online user.' });
+    }
 
     if (blockedUserIds.includes(calleeId)) {
       return res.status(403).json({ error: 'You cannot call a blocked user.' });
     }
 
     if (!callee.isOnline) {
-      return res.status(409).json({ error: 'User is currently offline. Try another available user or random match.' });
+      return res.status(409).json({ error: 'User is currently offline. Wait until they connect or call another available user.' });
     }
 
     if (callee.isBusy) {
@@ -428,19 +533,19 @@ async function startServer() {
     }
 
     const rate = type === 'video' ? config.videoCoinsPerMin : config.audioCoinsPerMin;
-    if (currentUser.coinsBalance < rate) {
+    if (caller.coinsBalance < rate) {
       return res.status(402).json({
-        error: `Insufficient coins balance (${currentUser.coinsBalance} coins). At least 1 minute rate (${rate} coins) required to initiate call.`,
+        error: `Insufficient coins balance (${caller.coinsBalance} coins). At least 1 minute rate (${rate} coins) required to initiate call.`,
         requiredCoins: rate,
-        currentBalance: currentUser.coinsBalance,
+        currentBalance: caller.coinsBalance,
       });
     }
 
     const session: CallSession = {
       id: 'CALL_' + Date.now(),
-      callerId: currentUser.id,
-      callerName: currentUser.displayName,
-      callerAvatar: currentUser.avatarUrl,
+      callerId: caller.id,
+      callerName: caller.displayName,
+      callerAvatar: caller.avatarUrl,
       calleeId: callee.id,
       calleeName: callee.displayName,
       calleeAvatar: callee.avatarUrl,
@@ -458,7 +563,8 @@ async function startServer() {
       createdAt: Date.now(),
       iceServers: [
         { urls: 'stun:stun.l.google.com:19302' },
-        { urls: 'turn:turn.matladuko.com:3478' },
+        { urls: 'stun:stun1.l.google.com:19302' },
+        { urls: 'stun:stun2.l.google.com:19302' },
       ],
     };
 
@@ -468,11 +574,17 @@ async function startServer() {
 
   // Random Stranger Match
   app.post('/api/v1/calls/random-match', (req, res) => {
-    const { type = 'audio', language = 'Telugu' } = req.body;
-    // Find eligible candidates: online, not busy, not blocked, not self
+    const { type = 'audio', language = 'Telugu', callerId } = req.body;
+    const resolvedCallerId = callerId || (req.headers['x-user-id'] as string) || (currentUser ? currentUser.id : '');
+    const caller = users.find((u) => u.id === resolvedCallerId) || currentUser;
+    if (!caller) return res.status(401).json({ error: 'Please log in first' });
+
+    // Strict opposite gender candidate matching
+    const targetGender = caller.gender === 'Male' ? 'Female' : 'Male';
     const candidates = users.filter(
       (u) =>
-        u.id !== currentUser.id &&
+        u.id !== caller.id &&
+        u.gender === targetGender &&
         u.isOnline &&
         !u.isBusy &&
         u.status === 'Active' &&
@@ -480,7 +592,7 @@ async function startServer() {
     );
 
     if (candidates.length === 0) {
-      return res.status(404).json({ error: 'No available online users found at the moment. Please try again shortly!' });
+      return res.status(404).json({ error: `No available ${targetGender} online users found at the moment. Please wait or try again shortly!` });
     }
 
     // Prioritize Telugu speakers
@@ -492,18 +604,18 @@ async function startServer() {
       : candidates[Math.floor(Math.random() * candidates.length)];
 
     const rate = type === 'video' ? config.videoCoinsPerMin : config.audioCoinsPerMin;
-    if (currentUser.coinsBalance < rate) {
+    if (caller.coinsBalance < rate) {
       return res.status(402).json({
-        error: `Insufficient coins balance (${currentUser.coinsBalance} coins). At least ${rate} coins required.`,
+        error: `Insufficient coins balance (${caller.coinsBalance} coins). At least ${rate} coins required.`,
         requiredCoins: rate,
       });
     }
 
     const session: CallSession = {
       id: 'RAND_CALL_' + Date.now(),
-      callerId: currentUser.id,
-      callerName: currentUser.displayName,
-      callerAvatar: currentUser.avatarUrl,
+      callerId: caller.id,
+      callerName: caller.displayName,
+      callerAvatar: caller.avatarUrl,
       calleeId: chosen.id,
       calleeName: chosen.displayName,
       calleeAvatar: chosen.avatarUrl,
@@ -519,6 +631,10 @@ async function startServer() {
       platformCoinsEarned: 0,
       coinToInrRate: config.coinToInrRate,
       createdAt: Date.now(),
+      iceServers: [
+        { urls: 'stun:stun.l.google.com:19302' },
+        { urls: 'stun:stun1.l.google.com:19302' },
+      ],
     };
 
     liveCalls.unshift(session);
@@ -536,7 +652,8 @@ async function startServer() {
     // Mark callee and caller busy
     const callee = users.find((u) => u.id === session.calleeId);
     if (callee) callee.isBusy = true;
-    currentUser.isBusy = true;
+    const caller = users.find((u) => u.id === session.callerId);
+    if (caller) caller.isBusy = true;
 
     res.json({ success: true, session });
   });
@@ -553,10 +670,10 @@ async function startServer() {
     // Unmark busy
     const callee = users.find((u) => u.id === session.calleeId);
     if (callee) callee.isBusy = false;
-    currentUser.isBusy = false;
+    const caller = users.find((u) => u.id === session.callerId);
+    if (caller) caller.isBusy = false;
 
-    // Billing calculation rule:
-    // "call billing starts only after the call is actually connected; do not charge for ringing, rejection, missed calls, cancellation or failed connections."
+    // Billing calculation rule
     if (!session.startTime) {
       session.durationSeconds = 0;
       session.billedCoins = 0;
@@ -567,7 +684,7 @@ async function startServer() {
       const rawSeconds = Math.floor(durationMs / 1000);
       session.durationSeconds = rawSeconds;
 
-      // Minimum billable seconds rule (e.g. 30 seconds)
+      // Minimum billable seconds rule
       const billableSeconds = Math.max(rawSeconds, config.minBillableSeconds);
 
       // Rounding Mode: CEIL_MINUTE
@@ -581,18 +698,20 @@ async function startServer() {
       const rate = session.type === 'video' ? session.videoRate : session.audioRate;
       let totalBilled = billableMinutes * rate;
 
-      // Prevent charging more than caller actually has
-      if (session.callerId === currentUser.id) {
-        totalBilled = Math.min(totalBilled, currentUser.coinsBalance);
-        currentUser.coinsBalance -= totalBilled;
+      // Deduct from caller
+      if (caller) {
+        totalBilled = Math.min(totalBilled, caller.coinsBalance);
+        caller.coinsBalance -= totalBilled;
+        caller.totalCallsMade = (caller.totalCallsMade || 0) + 1;
+        caller.totalCallDurationMins = (caller.totalCallDurationMins || 0) + Math.ceil(rawSeconds / 60);
 
         // Add ledger transaction
         walletTransactions.unshift({
           id: 'TX_' + Date.now(),
-          userId: currentUser.id,
+          userId: caller.id,
           type: 'DEBIT_CALL',
           amountCoins: -totalBilled,
-          balanceAfter: currentUser.coinsBalance,
+          balanceAfter: caller.coinsBalance,
           referenceId: session.id,
           description: `${session.type === 'video' ? 'Video' : 'Audio'} call to ${session.calleeName} (${Math.floor(rawSeconds / 60)}m ${rawSeconds % 60}s)`,
           createdAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
@@ -608,7 +727,8 @@ async function startServer() {
 
       // Credit callee creator earnings if callee is creator eligible
       if (callee) {
-        callee.earnedCoins += creatorShare;
+        callee.earnedCoins = (callee.earnedCoins || 0) + creatorShare;
+        callee.totalCallsReceived = (callee.totalCallsReceived || 0) + 1;
       }
     }
 
@@ -619,7 +739,66 @@ async function startServer() {
     res.json({
       success: true,
       session,
-      callerRemainingCoins: currentUser.coinsBalance,
+      callerRemainingCoins: caller ? caller.coinsBalance : 0,
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // 4. WALLET, PAYMENTS & CREATOR WITHDRAWALS
+  // -------------------------------------------------------------------------
+  app.get('/api/v1/wallet', (req, res) => {
+    const userId = (req.headers['x-user-id'] as string) || (req.query.userId as string);
+    const targetUser = userId ? users.find((u) => u.id === userId) || currentUser : currentUser;
+    const userTx = walletTransactions.filter((tx) => !userId || (targetUser && tx.userId === targetUser.id));
+    res.json({
+      balance: targetUser ? targetUser.coinsBalance : 500,
+      transactions: userTx,
+      packages: coinPackages,
+    });
+  });
+
+  app.post('/api/v1/wallet/buy-coins', (req, res) => {
+    const { packageId, paymentMethod = 'UPI', userId } = req.body;
+    const resolvedUserId = userId || (req.headers['x-user-id'] as string) || (currentUser ? currentUser.id : '');
+    const targetUser = users.find((u) => u.id === resolvedUserId) || currentUser;
+    if (!targetUser) return res.status(401).json({ error: 'User not found' });
+    const pkg = coinPackages.find((p) => p.id === packageId);
+    if (!pkg) return res.status(404).json({ error: 'Package not found' });
+
+    const orderId = 'PAY' + (1000 + payments.length + 1);
+    const newPayment: PaymentOrder = {
+      orderId,
+      userId: targetUser.id,
+      userName: targetUser.displayName,
+      packageId: pkg.id,
+      amountINR: pkg.priceINR,
+      coins: pkg.coins,
+      status: 'Success',
+      paymentMethod,
+      timestamp: new Date().toLocaleDateString('en-GB') + ' ' + new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      transactionRef: 'UPI/' + Date.now() + '/MATLADUKO',
+    };
+    payments.unshift(newPayment);
+
+    targetUser.coinsBalance += pkg.coins;
+
+    const newTx: WalletTransaction = {
+      id: 'TX_' + Date.now(),
+      userId: targetUser.id,
+      type: 'CREDIT_PURCHASE',
+      amountCoins: pkg.coins,
+      balanceAfter: targetUser.coinsBalance,
+      referenceId: orderId,
+      description: `Purchased ${pkg.coins} Coins (${paymentMethod})`,
+      createdAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+    };
+    walletTransactions.unshift(newTx);
+
+    res.json({
+      success: true,
+      message: `${pkg.coins} Coins credited successfully!`,
+      newBalance: targetUser.coinsBalance,
+      order: newPayment,
     });
   });
 
@@ -1120,6 +1299,42 @@ async function startServer() {
   const server = http.createServer(app);
   signalingService.init(server);
 
+  signalingService.onPresenceChange((userId, isOnline, callerInfo) => {
+    let u = users.find((usr) => usr.id === userId);
+    if (u) {
+      u.isOnline = isOnline;
+      if (!isOnline) u.isBusy = false;
+    } else if (isOnline && callerInfo) {
+      const newUser: UserProfile = {
+        id: userId,
+        phoneNumber: callerInfo.phoneNumber || '+91' + Math.floor(1000000000 + Math.random() * 9000000000),
+        displayName: callerInfo.displayName || 'User',
+        gender: callerInfo.gender || 'Female',
+        dob: '2000-01-01',
+        age: 24,
+        preferredLanguage: 'Telugu',
+        secondaryLanguages: ['English'],
+        avatarId: 'av_swapna',
+        avatarUrl: callerInfo.avatarUrl || 'https://api.dicebear.com/7.x/lorelei/svg?seed=' + userId,
+        status: 'Active',
+        isOnline: true,
+        isBusy: false,
+        coinsBalance: 500,
+        totalCallsMade: 0,
+        totalCallsReceived: 0,
+        totalCallDurationMins: 0,
+        earnedCoins: 0,
+        withdrawnINR: 0,
+        audioRatePerMin: 10,
+        videoRatePerMin: 20,
+        joinedDate: 'Just now',
+        lastActive: 'Just now',
+        bio: '',
+      };
+      users.unshift(newUser);
+    }
+  });
+
   server.listen(PORT, '0.0.0.0', () => {
     console.log(`Matladuko Server running at http://0.0.0.0:${PORT}`);
 
@@ -1132,6 +1347,7 @@ async function startServer() {
           console.log(`   Version: ${status.version}`);
           console.log(`   Tables: ${status.tablesCount} | Users: ${status.usersCount} | Latency: ${status.latencyMs}ms`);
           await seedInitialDataIfEmpty();
+          await loadUsersFromDb();
         } else {
           console.warn(`⚠️ [PostgreSQL Connection Warning]:`, status.error);
         }

@@ -50,6 +50,19 @@ export async function apiFetch(endpoint: string, options: RequestInit = {}): Pro
     headers.set('Content-Type', 'application/json');
   }
 
+  // Attach authenticated user ID header if present in storage
+  if (!headers.has('x-user-id') && typeof window !== 'undefined') {
+    try {
+      const stored = localStorage.getItem('matladuko_user_profile') || sessionStorage.getItem('matladuko_user_profile');
+      if (stored) {
+        const u = JSON.parse(stored);
+        if (u && u.id) {
+          headers.set('x-user-id', u.id);
+        }
+      }
+    } catch {}
+  }
+
   try {
     const response = await fetch(url, {
       ...options,

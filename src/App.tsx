@@ -19,8 +19,7 @@ import {
 import { MobileApp } from './components/mobile/MobileApp';
 import { AdminPanel } from './components/admin/AdminPanel';
 import { UserProfile } from './types';
-import { INITIAL_CURRENT_USER } from './data/mockDatabase';
-import { apiFetch } from './utils/apiConfig';
+import { apiFetch, CLOUD_BACKEND_URL } from './utils/apiConfig';
 
 export default function App() {
   // Production routing: Cleanly separate User Mobile Application and Admin Portal
@@ -40,7 +39,7 @@ export default function App() {
 
   const [viewMode, setViewMode] = useState<'mobile' | 'admin'>(getInitialMode);
   const [lang, setLang] = useState<'te' | 'en'>('te');
-  const [currentUser, setCurrentUser] = useState<UserProfile>(INITIAL_CURRENT_USER);
+  const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
   const [dbInfo, setDbInfo] = useState<any>(null);
   const [dbTesting, setDbTesting] = useState(false);
   const [dbToast, setDbToast] = useState<string | null>(null);
@@ -48,9 +47,9 @@ export default function App() {
   const [apkGuideTab, setApkGuideTab] = useState<'instant_pwa' | 'native_apk'>('instant_pwa');
   const [copiedLink, setCopiedLink] = useState(false);
 
-  const sharedAppUrl = typeof window !== 'undefined' && window.location.origin
+  const sharedAppUrl = typeof window !== 'undefined' && window.location.origin && !window.location.origin.includes('localhost')
     ? window.location.origin
-    : 'https://ais-dev-ldaahx6oj3uekstxyxofbg-103507214601.asia-southeast1.run.app';
+    : CLOUD_BACKEND_URL;
 
   const copyLiveLink = () => {
     navigator.clipboard.writeText(sharedAppUrl);
@@ -327,37 +326,37 @@ export default function App() {
                   </div>
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    {/* Phone 1: Rahul */}
+                    {/* Phone 1: User One */}
                     <div className="p-4 rounded-2xl bg-slate-950 border border-indigo-900/40 space-y-2">
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-2 text-indigo-400 font-bold text-sm">
                           <div className="w-6 h-6 rounded-full bg-indigo-500/20 flex items-center justify-center text-xs">1</div>
-                          <span>ఫోన్ 1: రాహుల్ (Rahul - Caller)</span>
+                          <span>ఫోన్ 1 (యూజర్ 1 - Male Caller)</span>
                         </div>
                         <span className="text-base">👨</span>
                       </div>
                       <ol className="list-decimal list-inside space-y-1.5 text-slate-300 leading-relaxed text-[11px]">
                         <li>మొదటి మొబైల్‌లో పై లింక్ ఓపెన్ చేయండి.</li>
-                        <li>లాగిన్ స్క్రీన్‌లో <strong>"👨 రాహుల్ (Rahul)"</strong> బటన్ లేదా <code className="text-indigo-300 font-mono">9876543210</code> ఎంటర్ చేయండి.</li>
-                        <li>రాహుల్ ప్రొఫైల్ (600 Coins) తో లాగిన్ అవుతుంది.</li>
-                        <li>ఆన్‌లైన్ లిస్ట్‌లో <strong>"Swapna (స్వప్న)"</strong> కనిపిస్తుంది.</li>
+                        <li>మీ మొబైల్ నంబర్ ఎంటర్ చేసి <strong>"OTP పొందండి"</strong> నొక్కండి.</li>
+                        <li>OTP (<code className="text-indigo-300 font-mono">123456</code>) కొట్టి, మీ పేరు నమోదు చేసి <strong>Gender: Male</strong> సెలెక్ట్ చేసుకోండి.</li>
+                        <li>ప్రొఫైల్ సేవ్ అవ్వగానే 500 కాయిన్స్ మరియు ఆన్‌లైన్ స్క్రీన్ ఓపెన్ అవుతుంది.</li>
                       </ol>
                     </div>
 
-                    {/* Phone 2: Swapna */}
+                    {/* Phone 2: User Two */}
                     <div className="p-4 rounded-2xl bg-slate-950 border border-rose-900/40 space-y-2">
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-2 text-rose-400 font-bold text-sm">
                           <div className="w-6 h-6 rounded-full bg-rose-500/20 flex items-center justify-center text-xs">2</div>
-                          <span>ఫోన్ 2: స్వప్న (Swapna - Receiver)</span>
+                          <span>ఫోన్ 2 (యూజర్ 2 - Female Callee)</span>
                         </div>
                         <span className="text-base">👩</span>
                       </div>
                       <ol className="list-decimal list-inside space-y-1.5 text-slate-300 leading-relaxed text-[11px]">
                         <li>రెండవ మొబైల్‌లో ఇదే లింక్ ఓపెన్ చేయండి.</li>
-                        <li>లాగిన్ స్క్రీన్‌లో <strong>"👩 స్వప్న (Swapna)"</strong> బటన్ లేదా <code className="text-rose-300 font-mono">9876543222</code> ఎంటర్ చేయండి.</li>
-                        <li>స్వప్న ప్రొఫైల్ (Creator, 1200 Coins) తో లాగిన్ అవుతుంది.</li>
-                        <li>కెమెరా, మైక్రోఫోన్ పర్మిషన్లకు <strong>"Allow"</strong> ఇవ్వండి.</li>
+                        <li>వేరే మొబైల్ నంబర్ ఎంటర్ చేసి OTP (<code className="text-rose-300 font-mono">123456</code>) ఎంటర్ చేయండి.</li>
+                        <li>పేరు నమోదు చేసి <strong>Gender: Female</strong> సెలెక్ట్ చేసుకోండి.</li>
+                        <li>కెమెరా, మైక్రోఫోన్ అనుమతులకు <strong>"Allow"</strong> ఇవ్వండి.</li>
                       </ol>
                     </div>
                   </div>
@@ -366,10 +365,10 @@ export default function App() {
                   <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 space-y-2">
                     <span className="font-bold text-white text-sm flex items-center gap-2">
                       <PhoneCall className="w-4 h-4 text-emerald-400" />
-                      <span>3. లైవ్ కాల్ & మాట్లాడటం (Live WebRTC Video Call):</span>
+                      <span>3. రియల్-టైమ్ P2P వీడియో కాల్ (Real-time Live Video Call):</span>
                     </span>
                     <p className="text-slate-300 leading-relaxed">
-                      ఫోన్ 1 లో రాహుల్ <strong>Swapna</strong> ప్రొఫైల్ వద్ద <strong>"Video Call"</strong> నొక్కగానే, ఫోన్ 2 లో స్వప్నకు వెంటనే రింగ్‌టోన్‌తో ఇన్‌కమింగ్ వీడియో కాల్ స్క్రీన్ వస్తుంది. స్వప్న <strong>"ఆన్సర్ (Answer)"</strong> నొక్కగానే ఇద్దరి కెమెరా, మైక్ లైవ్‌గా P2P లో కనెక్ట్ అవుతాయి. లైవ్ మాట్లాడవచ్చు, కాయిన్స్ డిడక్ట్ అవుతాయి!
+                      ఇద్దరూ ఆన్‌లైన్ రాగానే ఫోన్ 1 లో ఫోన్ 2 యూజర్ ప్రొఫైల్ లైవ్‌గా కనిపిస్తుంది. ఫోన్ 1 లో <strong>"Video Call"</strong> నొక్కగానే, ఫోన్ 2 లో వెంటనే రింగ్‌టోన్‌తో ఇన్‌కమింగ్ వీడియో కాల్ స్క్రీన్ వస్తుంది. ఫోన్ 2 లో <strong>"ఆన్సర్ (Answer)"</strong> నొక్కగానే ఇద్దరి కెమెరా, మైక్ లైవ్‌గా WebRTC P2P ద్వారా కనెక్ట్ అవుతాయి!
                     </p>
                   </div>
                 </div>

@@ -7,6 +7,7 @@ interface RegisteredClient {
   ws: WebSocket;
   userName?: string;
   avatarUrl?: string;
+  gender?: string;
   isBusy: boolean;
   connectedAt: Date;
 }
@@ -47,6 +48,11 @@ class SignalingService {
     startedAt: number;
     connectedAt?: number;
   }>();
+  private presenceCallback: ((userId: string, isOnline: boolean, callerInfo?: any) => void) | null = null;
+
+  public onPresenceChange(cb: (userId: string, isOnline: boolean, callerInfo?: any) => void) {
+    this.presenceCallback = cb;
+  }
 
   public init(server: HttpServer) {
     this.wss = new WebSocketServer({ server, path: '/ws/signaling' });
@@ -98,9 +104,12 @@ class SignalingService {
           ws,
           userName: msg.callerInfo?.displayName,
           avatarUrl: msg.callerInfo?.avatarUrl,
+          gender: msg.callerInfo?.gender,
           isBusy: false,
           connectedAt: new Date(),
         });
+
+        this.presenceCallback?.(msg.userId, true, msg.callerInfo);
 
         ws.send(JSON.stringify({
           type: 'REGISTERED_SUCCESS',
@@ -339,6 +348,7 @@ class SignalingService {
     }
 
     this.clients.delete(userId);
+    this.presenceCallback?.(userId, false);
     this.broadcastPresence();
   }
 
@@ -347,6 +357,7 @@ class SignalingService {
       userId: c.userId,
       userName: c.userName || 'Telugu User',
       avatarUrl: c.avatarUrl || '',
+      gender: c.gender || '',
       isBusy: c.isBusy,
     }));
 

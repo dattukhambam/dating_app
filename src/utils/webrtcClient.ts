@@ -1,5 +1,6 @@
 /**
  * Matladuko Production WebRTC Client with WebSocket Signaling & Real-time Media
+ * Supports Two-Device Live Audio & Video Calls with ICE Candidate exchange
  */
 
 import { getSignalingUrl } from './apiConfig';
@@ -11,6 +12,7 @@ export interface WebRtcCallbacks {
   onAudioLevel?: (db: number) => void;
   onIncomingCall?: (callData: { callId: string; caller: any; callType: 'audio' | 'video' }) => void;
   onCallEnded?: (reason: string, durationSec?: number) => void;
+  onPresenceUpdate?: (onlineUsers: any[]) => void;
   onError?: (errorMsg: string) => void;
 }
 
@@ -24,8 +26,15 @@ export class MatladukoWebRtcManager {
   private audioAnimFrame: number | null = null;
   private activeCallId: string | null = null;
   private currentUserId: string = '';
+  private currentDisplayName: string = '';
+  private currentAvatarUrl: string = '';
   private targetPeerId: string = '';
   private callbacks: WebRtcCallbacks = {};
+
+  // Store offer and ICE candidates that arrive before callee accepts
+  private pendingOffer: any = null;
+  private earlyCandidates: RTCIceCandidateInit[] = [];
+
   private iceServers = [
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
@@ -36,8 +45,10 @@ export class MatladukoWebRtcManager {
     this.callbacks = callbacks;
   }
 
-  public connectSignaling(userId: string, displayName: string, avatarUrl: string) {
+  public connectSignaling(userId: string, displayName: string, avatarUrl: string, gender?: string) {
     this.currentUserId = userId;
+    this.currentDisplayName = displayName;
+    this.currentAvatarUrl = avatarUrl;
     const wsUrl = getSignalingUrl();
 
     try {
@@ -51,6 +62,7 @@ export class MatladukoWebRtcManager {
             id: userId,
             displayName,
             avatarUrl,
+            gender,
           },
         }));
       };
@@ -68,7 +80,7 @@ export class MatladukoWebRtcManager {
         // Reconnect after 3 seconds if dropped
         setTimeout(() => {
           if (this.currentUserId) {
-            this.connectSignaling(this.currentUserId, displayName, avatarUrl);
+            this.connectSignaling(this.currentUserId, this.currentDisplayName, this.currentAvatarUrl);
           }
         }, 3000);
       };
@@ -79,6 +91,11 @@ export class MatladukoWebRtcManager {
 
   private async handleSignalingMessage(msg: any) {
     switch (msg.type) {
+      case 'PRESENCE_UPDATE': {
+        this.callbacks.onPresenceUpdate?.(msg.onlineUsers || []);
+        break;
+      }
+
       case 'INCOMING_CALL': {
         this.activeCallId = msg.callId;
         this.targetPeerId = msg.caller?.id || '';
@@ -96,38 +113,45 @@ export class MatladukoWebRtcManager {
       }
 
       case 'CALL_OFFER': {
-        if (!this.peerConnection) {
-          await this.createPeerConnection();
-        }
-        await this.peerConnection?.setRemoteDescription(new RTCSessionDescription(msg.sdp));
-        const answer = await this.peerConnection?.createAnswer();
-        if (answer) {
-          await this.peerConnection?.setLocalDescription(answer);
-          this.ws?.send(JSON.stringify({
-            type: 'CALL_ANSWER',
-            callId: msg.callId || this.activeCallId,
-            targetUserId: msg.callerId || this.targetPeerId,
-            userId: this.currentUserId,
-            sdp: answer,
-          }));
+        // Store offer until Callee clicks "Accept"
+        this.pendingOffer = msg.sdp;
+        if (msg.callerId) this.targetPeerId = msg.callerId;
+        if (msg.callId) this.activeCallId = msg.callId;
+
+        // If callee has ALREADY clicked accept (peer connection exists)
+        if (this.peerConnection) {
+          await this.completeAnswerFlow(msg.sdp);
         }
         break;
       }
 
       case 'CALL_ANSWER': {
         if (this.peerConnection) {
-          await this.peerConnection.setRemoteDescription(new RTCSessionDescription(msg.sdp));
-          this.callbacks.onCallStateChange?.('connected');
+          try {
+            await this.peerConnection.setRemoteDescription(new RTCSessionDescription(msg.sdp));
+            // Apply any queued candidates
+            for (const cand of this.earlyCandidates) {
+              await this.peerConnection.addIceCandidate(new RTCIceCandidate(cand));
+            }
+            this.earlyCandidates = [];
+            this.callbacks.onCallStateChange?.('connected');
+          } catch (e: any) {
+            console.warn('Error applying remote answer:', e.message);
+          }
         }
         break;
       }
 
       case 'ICE_CANDIDATE': {
-        if (this.peerConnection && msg.candidate) {
-          try {
-            await this.peerConnection.addIceCandidate(new RTCIceCandidate(msg.candidate));
-          } catch (e) {
-            console.warn('Error adding ICE candidate', e);
+        if (msg.candidate) {
+          if (this.peerConnection && this.peerConnection.remoteDescription) {
+            try {
+              await this.peerConnection.addIceCandidate(new RTCIceCandidate(msg.candidate));
+            } catch (e) {
+              console.warn('Error adding ICE candidate', e);
+            }
+          } else {
+            this.earlyCandidates.push(msg.candidate);
           }
         }
         break;
@@ -136,7 +160,7 @@ export class MatladukoWebRtcManager {
       case 'CALL_ENDED':
       case 'CALL_REJECTED': {
         this.cleanup();
-        this.callbacks.onCallEnded?.(msg.reason || 'Call terminated', msg.durationSeconds);
+        this.callbacks.onCallEnded?.(msg.reason || 'Call ended', msg.durationSeconds);
         this.callbacks.onCallStateChange?.('ended');
         break;
       }
@@ -154,11 +178,12 @@ export class MatladukoWebRtcManager {
     const callId = `CALL_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
     this.activeCallId = callId;
     this.targetPeerId = targetUserId;
+    this.earlyCandidates = [];
 
     // 1. Get user media (microphone/camera)
     await this.initLocalMedia(callType);
 
-    // 2. Initialize RTCPeerConnection
+    // 2. Initialize RTCPeerConnection with local tracks
     await this.createPeerConnection();
 
     // 3. Inform signaling server to initiate call
@@ -195,14 +220,45 @@ export class MatladukoWebRtcManager {
     this.activeCallId = callId;
     this.targetPeerId = callerId;
 
-    // 1. Get local audio/video
+    // 1. Get local media
     await this.initLocalMedia(callType);
 
-    // 2. Peer connection is initialized, waiting for or answering offer
-    if (!this.peerConnection) {
-      await this.createPeerConnection();
+    // 2. Create peer connection with local tracks
+    await this.createPeerConnection();
+
+    // 3. If offer has already arrived, answer it immediately
+    if (this.pendingOffer) {
+      await this.completeAnswerFlow(this.pendingOffer);
     }
-    this.callbacks.onCallStateChange?.('connected');
+  }
+
+  private async completeAnswerFlow(offerSdp: any) {
+    if (!this.peerConnection) return;
+    try {
+      await this.peerConnection.setRemoteDescription(new RTCSessionDescription(offerSdp));
+
+      const answer = await this.peerConnection.createAnswer();
+      await this.peerConnection.setLocalDescription(answer);
+
+      // Send CALL_ANSWER
+      this.ws?.send(JSON.stringify({
+        type: 'CALL_ANSWER',
+        callId: this.activeCallId,
+        targetUserId: this.targetPeerId,
+        userId: this.currentUserId,
+        sdp: answer,
+      }));
+
+      // Apply any early candidates
+      for (const cand of this.earlyCandidates) {
+        await this.peerConnection.addIceCandidate(new RTCIceCandidate(cand));
+      }
+      this.earlyCandidates = [];
+
+      this.callbacks.onCallStateChange?.('connected');
+    } catch (err: any) {
+      console.warn('Error completing answer flow:', err.message);
+    }
   }
 
   public rejectIncomingCall(callId: string, callerId: string) {
@@ -316,7 +372,7 @@ export class MatladukoWebRtcManager {
         ctx.fillStyle = '#ffffff';
         ctx.font = 'bold 16px sans-serif';
         ctx.textAlign = 'center';
-        ctx.fillText('Matladuko Live Camera', canvas.width / 2, canvas.height / 2);
+        ctx.fillText('Live Camera', canvas.width / 2, canvas.height / 2);
         ctx.font = '12px sans-serif';
         ctx.fillText('WebRTC Video Active', canvas.width / 2, canvas.height / 2 + 25);
       };
@@ -348,7 +404,6 @@ export class MatladukoWebRtcManager {
           sum += dataArray[i];
         }
         const avg = sum / dataArray.length;
-        // Map 0-255 to approximate decibel range 30-85 dB
         const approxDb = Math.round(30 + (avg / 255) * 55);
         this.callbacks.onAudioLevel?.(approxDb);
         this.audioAnimFrame = requestAnimationFrame(checkAudio);
@@ -395,5 +450,7 @@ export class MatladukoWebRtcManager {
     }
     this.remoteStream = null;
     this.activeCallId = null;
+    this.pendingOffer = null;
+    this.earlyCandidates = [];
   }
 }
