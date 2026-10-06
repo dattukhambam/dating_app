@@ -57,7 +57,7 @@ import { MatladukoWebRtcManager } from '../../utils/webrtcClient';
 import { apiFetch } from '../../utils/apiConfig';
 
 interface MobileAppProps {
-  initialUser: UserProfile;
+  initialUser?: UserProfile | null;
   onRefreshData?: () => void;
   lang?: 'te' | 'en';
   onToggleLang?: () => void;
@@ -361,6 +361,77 @@ export const MobileApp: React.FC<MobileAppProps> = ({
     fetchWallet();
     fetchHistory();
   }, [languageFilter, genderFilter, currentScreen]);
+
+  // Periodic polling for online users so 2nd device appears immediately without manual refresh
+  useEffect(() => {
+    if (!isLoggedIn || !user.id) return;
+    const interval = setInterval(() => {
+      fetchUsers();
+    }, 4000);
+    return () => clearInterval(interval);
+  }, [isLoggedIn, user.id, languageFilter, genderFilter, currentScreen]);
+
+  // Active Presence Heartbeat so server knows user is alive & online
+  useEffect(() => {
+    if (!isLoggedIn || !user.id) return;
+    const sendHeartbeat = () => {
+      apiFetch('/api/v1/users/heartbeat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-user-id': user.id },
+        body: JSON.stringify({ userId: user.id }),
+      }).catch(() => {});
+    };
+    sendHeartbeat();
+    const heartbeatTimer = setInterval(sendHeartbeat, 15000);
+    return () => clearInterval(heartbeatTimer);
+  }, [isLoggedIn, user.id]);
+
+  // High-reliability Signal Polling Fallback (ensures incoming calls never drop across networks)
+  useEffect(() => {
+    if (!isLoggedIn || !user.id || activeCall) return;
+    const signalTimer = setInterval(async () => {
+      try {
+        const res = await apiFetch(`/api/v1/calls/signals/pending?userId=${user.id}`, {
+          headers: { 'x-user-id': user.id },
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.signals && data.signals.length > 0) {
+            for (const sig of data.signals) {
+              if (sig.type === 'CALL_INITIATE' && !incomingCallData && !activeCall) {
+                const payload = typeof sig.payload === 'string' ? JSON.parse(sig.payload) : sig.payload;
+                soundEffects.startRingtone();
+                setIncomingCallData({
+                  caller: payload.callerInfo || { id: sig.from_user_id, displayName: 'Telugu Caller' },
+                  type: payload.callType || 'video',
+                  sessionId: sig.call_id,
+                });
+                setCurrentScreen('incoming_call');
+              } else if (sig.type === 'CALL_OFFER' || sig.type === 'CALL_ANSWER' || sig.type === 'ICE_CANDIDATE') {
+                const payload = typeof sig.payload === 'string' ? JSON.parse(sig.payload) : sig.payload;
+                webrtcManagerRef.current?.handleExternalSignal({
+                  type: sig.type,
+                  callId: sig.call_id,
+                  targetUserId: sig.to_user_id,
+                  userId: sig.from_user_id,
+                  ...payload,
+                });
+              } else if (sig.type === 'CALL_END') {
+                soundEffects.stopRingtone();
+                soundEffects.playEndChime();
+                setRemoteStream(null);
+                setLocalStream(null);
+                setActiveCall(null);
+                setIncomingCallData(null);
+                setCurrentScreen('online_users');
+              }
+            }
+          }
+        }
+      } catch {}
+    }, 2500);
+    return () => clearInterval(signalTimer);
+  }, [isLoggedIn, user.id, activeCall, incomingCallData]);
 
   // Call timer interval
   useEffect(() => {
@@ -1424,8 +1495,16 @@ export const MobileApp: React.FC<MobileAppProps> = ({
                   <RefreshCw className="w-3.5 h-3.5" />
                 </button>
                 <button
-                  onClick={() => {
+                  onClick={async () => {
+                    const currentId = user.id;
                     try {
+                      if (currentId) {
+                        apiFetch('/api/v1/auth/logout', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json', 'x-user-id': currentId },
+                          body: JSON.stringify({ userId: currentId }),
+                        }).catch(() => {});
+                      }
                       localStorage.removeItem('matladuko_user_logged_in');
                       localStorage.removeItem('matladuko_user_profile');
                       sessionStorage.removeItem('matladuko_user_logged_in');

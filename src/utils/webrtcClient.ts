@@ -28,7 +28,9 @@ export class MatladukoWebRtcManager {
   private currentUserId: string = '';
   private currentDisplayName: string = '';
   private currentAvatarUrl: string = '';
+  private currentGender: string = 'Male';
   private targetPeerId: string = '';
+  private heartbeatInterval: any = null;
   private callbacks: WebRtcCallbacks = {};
 
   // Store offer and ICE candidates that arrive before callee accepts
@@ -39,6 +41,8 @@ export class MatladukoWebRtcManager {
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
     { urls: 'stun:stun2.l.google.com:19302' },
+    { urls: 'stun:stun3.l.google.com:19302' },
+    { urls: 'stun:stun4.l.google.com:19302' },
   ];
 
   constructor(callbacks: WebRtcCallbacks) {
@@ -49,6 +53,7 @@ export class MatladukoWebRtcManager {
     this.currentUserId = userId;
     this.currentDisplayName = displayName;
     this.currentAvatarUrl = avatarUrl;
+    if (gender) this.currentGender = gender;
     const wsUrl = getSignalingUrl();
 
     try {
@@ -62,9 +67,17 @@ export class MatladukoWebRtcManager {
             id: userId,
             displayName,
             avatarUrl,
-            gender,
+            gender: this.currentGender,
           },
         }));
+
+        // Send periodic heartbeat every 20 seconds
+        if (this.heartbeatInterval) clearInterval(this.heartbeatInterval);
+        this.heartbeatInterval = setInterval(() => {
+          if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+            this.ws.send(JSON.stringify({ type: 'HEARTBEAT' }));
+          }
+        }, 20000);
       };
 
       this.ws.onmessage = async (event) => {
@@ -77,16 +90,21 @@ export class MatladukoWebRtcManager {
       };
 
       this.ws.onclose = () => {
+        if (this.heartbeatInterval) clearInterval(this.heartbeatInterval);
         // Reconnect after 3 seconds if dropped
         setTimeout(() => {
           if (this.currentUserId) {
-            this.connectSignaling(this.currentUserId, this.currentDisplayName, this.currentAvatarUrl);
+            this.connectSignaling(this.currentUserId, this.currentDisplayName, this.currentAvatarUrl, this.currentGender);
           }
         }, 3000);
       };
     } catch (e: any) {
       console.warn('WebSocket connection error:', e.message);
     }
+  }
+
+  public async handleExternalSignal(msg: any) {
+    await this.handleSignalingMessage(msg);
   }
 
   private async handleSignalingMessage(msg: any) {

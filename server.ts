@@ -74,7 +74,7 @@ async function loadUsersFromDb() {
     const res = await pool.query(`
       SELECT u.id, u.phone_number, p.display_name, p.gender, p.age, p.date_of_birth,
              p.preferred_language_id, p.avatar_id, a.svg_url, COALESCE(w.balance_coins, 500) as balance_coins,
-             u.status
+             u.status, p.is_online, p.last_seen_at
       FROM users u
       JOIN user_profiles p ON u.id = p.user_id
       LEFT JOIN avatars a ON p.avatar_id = a.id
@@ -82,33 +82,38 @@ async function loadUsersFromDb() {
     `);
     if (res.rows && res.rows.length > 0) {
       for (const r of res.rows) {
-        if (!users.some((existing) => existing.id === r.id || existing.phoneNumber === r.phone_number)) {
-          users.push({
-            id: r.id,
-            phoneNumber: r.phone_number,
-            displayName: r.display_name || 'User',
-            gender: r.gender === 'Female' ? 'Female' : 'Male',
-            dob: r.date_of_birth ? new Date(r.date_of_birth).toISOString().split('T')[0] : '2000-01-01',
-            age: r.age || 24,
-            preferredLanguage: r.preferred_language_id === 'en' ? 'English' : 'Telugu',
-            secondaryLanguages: ['English'],
-            avatarId: r.avatar_id || 'av_aman',
-            avatarUrl: r.svg_url || PREDEFINED_AVATARS[0].svgUrl,
-            status: r.status || 'Active',
-            isOnline: false,
-            isBusy: false,
-            coinsBalance: Number(r.balance_coins) || 500,
-            totalCallsMade: 0,
-            totalCallsReceived: 0,
-            totalCallDurationMins: 0,
-            earnedCoins: 0,
-            withdrawnINR: 0,
-            audioRatePerMin: 10,
-            videoRatePerMin: 20,
-            joinedDate: 'Registered',
-            lastActive: 'Offline',
-            bio: '',
-          });
+        const isOnlineNow = Boolean(r.is_online || (r.last_seen_at && (Date.now() - new Date(r.last_seen_at).getTime()) < 180000));
+        const existingIdx = users.findIndex((existing) => existing.id === r.id || existing.phoneNumber === r.phone_number);
+        const userData: UserProfile = {
+          id: r.id,
+          phoneNumber: r.phone_number,
+          displayName: r.display_name || 'User',
+          gender: r.gender === 'Female' ? 'Female' : 'Male',
+          dob: r.date_of_birth ? new Date(r.date_of_birth).toISOString().split('T')[0] : '2000-01-01',
+          age: r.age || 24,
+          preferredLanguage: r.preferred_language_id === 'en' ? 'English' : 'Telugu',
+          secondaryLanguages: ['English'],
+          avatarId: r.avatar_id || (r.gender === 'Female' ? 'av_swapna' : 'av_aman'),
+          avatarUrl: r.svg_url || (r.gender === 'Female' ? 'https://api.dicebear.com/7.x/lorelei/svg?seed=Swapna&backgroundColor=ffd5dc' : PREDEFINED_AVATARS[0].svgUrl),
+          status: r.status || 'Active',
+          isOnline: isOnlineNow,
+          isBusy: false,
+          coinsBalance: Number(r.balance_coins) || 500,
+          totalCallsMade: 0,
+          totalCallsReceived: 0,
+          totalCallDurationMins: 0,
+          earnedCoins: 0,
+          withdrawnINR: 0,
+          audioRatePerMin: 10,
+          videoRatePerMin: 20,
+          joinedDate: 'Registered',
+          lastActive: isOnlineNow ? 'Just now' : 'Offline',
+          bio: '',
+        };
+        if (existingIdx >= 0) {
+          users[existingIdx] = { ...users[existingIdx], ...userData };
+        } else {
+          users.push(userData);
         }
       }
       console.log(`Loaded ${users.length} registered real users from database.`);
@@ -162,7 +167,7 @@ async function startServer() {
     });
   });
 
-  app.post('/api/v1/auth/verify-otp', (req, res) => {
+  app.post('/api/v1/auth/verify-otp', async (req, res) => {
     const { phoneNumber, otp } = req.body;
     if (!otp) {
       return res.status(400).json({ error: 'Please enter 6-digit OTP.' });
@@ -175,23 +180,9 @@ async function startServer() {
     const digitsOnly = (phoneNumber || '').replace(/\D/g, '');
     const normalizedPhone = '+91' + (digitsOnly.length >= 10 ? digitsOnly.slice(-10) : digitsOnly);
 
-    // Look for existing registered user
-    const existing = users.find((u) => u.phoneNumber === normalizedPhone);
-    if (existing) {
-      existing.isOnline = true;
-      existing.isBusy = false;
-      currentUser = existing;
-      return res.json({
-        success: true,
-        isNewUser: false,
-        token: 'jwt_token_' + existing.id,
-        user: existing,
-      });
-    }
-
-    // Check DB for existing user if not currently in memory
+    // Check PostgreSQL database first
     try {
-      pool.query(`
+      const dbRes = await pool.query(`
         SELECT u.id, u.phone_number, p.display_name, p.gender, p.age, p.date_of_birth,
                p.preferred_language_id, p.avatar_id, a.svg_url, COALESCE(w.balance_coins, 500) as balance_coins,
                u.status
@@ -200,40 +191,79 @@ async function startServer() {
         LEFT JOIN avatars a ON p.avatar_id = a.id
         LEFT JOIN wallets w ON u.id = w.user_id
         WHERE u.phone_number = $1
-      `, [normalizedPhone]).then((dbRes) => {
-        if (dbRes.rows && dbRes.rows.length > 0) {
-          const r = dbRes.rows[0];
-          const loadedUser: UserProfile = {
-            id: r.id,
-            phoneNumber: r.phone_number,
-            displayName: r.display_name || 'User',
-            gender: r.gender === 'Female' ? 'Female' : 'Male',
-            dob: r.date_of_birth ? new Date(r.date_of_birth).toISOString().split('T')[0] : '2000-01-01',
-            age: r.age || 24,
-            preferredLanguage: r.preferred_language_id === 'en' ? 'English' : 'Telugu',
-            secondaryLanguages: ['English'],
-            avatarId: r.avatar_id || 'av_aman',
-            avatarUrl: r.svg_url || PREDEFINED_AVATARS[0].svgUrl,
-            status: r.status || 'Active',
-            isOnline: true,
-            isBusy: false,
-            coinsBalance: Number(r.balance_coins) || 500,
-            totalCallsMade: 0,
-            totalCallsReceived: 0,
-            totalCallDurationMins: 0,
-            earnedCoins: 0,
-            withdrawnINR: 0,
-            audioRatePerMin: 10,
-            videoRatePerMin: 20,
-            joinedDate: 'Registered',
-            lastActive: 'Just now',
-            bio: '',
-          };
+      `, [normalizedPhone]);
+
+      if (dbRes.rows && dbRes.rows.length > 0) {
+        const r = dbRes.rows[0];
+        // Mark user active & online in database
+        await pool.query(`
+          UPDATE user_profiles
+          SET is_online = true, last_seen_at = NOW()
+          WHERE user_id = $1
+        `, [r.id]);
+
+        const loadedUser: UserProfile = {
+          id: r.id,
+          phoneNumber: r.phone_number,
+          displayName: r.display_name || 'User',
+          gender: r.gender === 'Female' ? 'Female' : 'Male',
+          dob: r.date_of_birth ? new Date(r.date_of_birth).toISOString().split('T')[0] : '2000-01-01',
+          age: r.age || 24,
+          preferredLanguage: r.preferred_language_id === 'en' ? 'English' : 'Telugu',
+          secondaryLanguages: ['English'],
+          avatarId: r.avatar_id || (r.gender === 'Female' ? 'av_swapna' : 'av_aman'),
+          avatarUrl: r.svg_url || (r.gender === 'Female' ? 'https://api.dicebear.com/7.x/lorelei/svg?seed=Swapna&backgroundColor=ffd5dc' : PREDEFINED_AVATARS[0].svgUrl),
+          status: r.status || 'Active',
+          isOnline: true,
+          isBusy: false,
+          coinsBalance: Number(r.balance_coins) || 500,
+          totalCallsMade: 0,
+          totalCallsReceived: 0,
+          totalCallDurationMins: 0,
+          earnedCoins: 0,
+          withdrawnINR: 0,
+          audioRatePerMin: 10,
+          videoRatePerMin: 20,
+          joinedDate: 'Registered',
+          lastActive: 'Just now',
+          bio: '',
+        };
+
+        const existingIdx = users.findIndex((u) => u.id === loadedUser.id || u.phoneNumber === loadedUser.phoneNumber);
+        if (existingIdx >= 0) {
+          users[existingIdx] = loadedUser;
+        } else {
           users.unshift(loadedUser);
-          currentUser = loadedUser;
         }
-      }).catch(() => {});
-    } catch {}
+        currentUser = loadedUser;
+
+        return res.json({
+          success: true,
+          isNewUser: false,
+          token: 'jwt_token_' + loadedUser.id,
+          user: loadedUser,
+        });
+      }
+    } catch (dbErr: any) {
+      console.warn('DB check on verify-otp error:', dbErr.message);
+    }
+
+    // Look for existing registered user in memory
+    const existing = users.find((u) => u.phoneNumber === normalizedPhone);
+    if (existing) {
+      existing.isOnline = true;
+      existing.isBusy = false;
+      currentUser = existing;
+      try {
+        await pool.query(`UPDATE user_profiles SET is_online = true, last_seen_at = NOW() WHERE user_id = $1`, [existing.id]);
+      } catch {}
+      return res.json({
+        success: true,
+        isNewUser: false,
+        token: 'jwt_token_' + existing.id,
+        user: existing,
+      });
+    }
 
     // New user detected - request profile registration
     return res.json({
@@ -269,16 +299,25 @@ async function startServer() {
     const userLang = preferredLanguage || 'Telugu';
     const userAge = Number(age) || 24;
 
+    // Check if user already exists in DB
+    let userId = 'USR_' + Date.now();
+    try {
+      const existingDb = await pool.query('SELECT id FROM users WHERE phone_number = $1', [normalizedPhone]);
+      if (existingDb.rows && existingDb.rows.length > 0) {
+        userId = existingDb.rows[0].id;
+      }
+    } catch {}
+
     // Default avatar based on gender
     let chosenAvatarId = avatarId;
     if (!chosenAvatarId) {
       chosenAvatarId = userGender === 'Female' ? 'av_swapna' : 'av_aman';
     }
     const foundAv = PREDEFINED_AVATARS.find((a) => a.id === chosenAvatarId);
-    const chosenAvatarUrl = foundAv ? foundAv.svgUrl : PREDEFINED_AVATARS[0].svgUrl;
+    const chosenAvatarUrl = foundAv ? foundAv.svgUrl : (userGender === 'Female' ? 'https://api.dicebear.com/7.x/lorelei/svg?seed=Swapna&backgroundColor=ffd5dc' : PREDEFINED_AVATARS[0].svgUrl);
 
     const newUser: UserProfile = {
-      id: 'USR_' + Date.now(),
+      id: userId,
       phoneNumber: normalizedPhone,
       displayName: displayName.trim(),
       gender: userGender,
@@ -305,27 +344,34 @@ async function startServer() {
     };
 
     // Save in memory
-    users.unshift(newUser);
+    const existingIdx = users.findIndex((u) => u.id === userId || u.phoneNumber === normalizedPhone);
+    if (existingIdx >= 0) {
+      users[existingIdx] = newUser;
+    } else {
+      users.unshift(newUser);
+    }
     currentUser = newUser;
 
-    // Persist to PostgreSQL with proper relational schema
+    // Persist to PostgreSQL with proper relational schema and handle conflict
     try {
       await dbQuery(`
         INSERT INTO users (id, phone_number, status)
         VALUES ($1, $2, 'Active')
-        ON CONFLICT (id) DO UPDATE SET phone_number = EXCLUDED.phone_number;
+        ON CONFLICT (phone_number) DO UPDATE SET status = 'Active';
       `, [newUser.id, newUser.phoneNumber]);
 
       await dbQuery(`
         INSERT INTO user_profiles (
           user_id, display_name, gender, date_of_birth, age,
-          preferred_language_id, avatar_id, bio, is_creator_eligible
+          preferred_language_id, avatar_id, bio, is_creator_eligible, is_online, last_seen_at
         )
-        VALUES ($1, $2, $3, $4, $5, 'te', $6, $7, true)
+        VALUES ($1, $2, $3, $4, $5, 'te', $6, $7, true, true, NOW())
         ON CONFLICT (user_id) DO UPDATE SET
           display_name = EXCLUDED.display_name,
           gender = EXCLUDED.gender,
-          avatar_id = EXCLUDED.avatar_id;
+          avatar_id = EXCLUDED.avatar_id,
+          is_online = true,
+          last_seen_at = NOW();
       `, [
         newUser.id,
         newUser.displayName,
@@ -339,7 +385,7 @@ async function startServer() {
       await dbQuery(`
         INSERT INTO wallets (user_id, balance_coins, reserved_coins)
         VALUES ($1, $2, 0)
-        ON CONFLICT (user_id) DO UPDATE SET balance_coins = EXCLUDED.balance_coins;
+        ON CONFLICT (user_id) DO NOTHING;
       `, [newUser.id, newUser.coinsBalance]);
     } catch (e: any) {
       console.warn('PostgreSQL user persistence notice:', e.message);
@@ -400,12 +446,109 @@ async function startServer() {
     res.json(PREDEFINED_AVATARS);
   });
 
+  // User presence heartbeat from active clients
+  app.post('/api/v1/users/heartbeat', async (req, res) => {
+    const userId = (req.body?.userId as string) || (req.headers['x-user-id'] as string);
+    if (!userId) return res.status(400).json({ error: 'userId required' });
+
+    let found = users.find((u) => u.id === userId);
+    if (found) {
+      found.isOnline = true;
+      found.lastActive = 'Just now';
+    }
+
+    try {
+      await pool.query(`
+        UPDATE user_profiles
+        SET is_online = true, last_seen_at = NOW()
+        WHERE user_id = $1
+      `, [userId]);
+    } catch {}
+
+    return res.json({ success: true, isOnline: true });
+  });
+
+  // Explicit logout endpoint
+  app.post('/api/v1/auth/logout', async (req, res) => {
+    const userId = (req.body?.userId as string) || (req.headers['x-user-id'] as string);
+    if (userId) {
+      let found = users.find((u) => u.id === userId);
+      if (found) {
+        found.isOnline = false;
+        found.lastActive = 'Offline';
+      }
+      try {
+        await pool.query(`
+          UPDATE user_profiles
+          SET is_online = false, last_seen_at = NOW() - INTERVAL '10 minutes'
+          WHERE user_id = $1
+        `, [userId]);
+      } catch {}
+    }
+    return res.json({ success: true });
+  });
+
   // -------------------------------------------------------------------------
   // 2. USERS DISCOVERY & FAVORITES & BLOCKS
   // -------------------------------------------------------------------------
-  app.get('/api/v1/users/online', (req, res) => {
+  app.get('/api/v1/users/online', async (req, res) => {
     const { language, gender, tab, currentUserId } = req.query;
     const myId = (currentUserId as string) || (req.headers['x-user-id'] as string);
+
+    // Refresh active online users from PostgreSQL
+    try {
+      const dbOnline = await pool.query(`
+        SELECT u.id, u.phone_number, p.display_name, p.gender, p.age, p.date_of_birth,
+               p.preferred_language_id, p.avatar_id, a.svg_url, COALESCE(w.balance_coins, 500) as balance_coins,
+               u.status, p.is_online, p.last_seen_at
+        FROM users u
+        JOIN user_profiles p ON u.id = p.user_id
+        LEFT JOIN avatars a ON p.avatar_id = a.id
+        LEFT JOIN wallets w ON u.id = w.user_id
+        WHERE (p.is_online = true OR p.last_seen_at > NOW() - INTERVAL '3 minutes')
+      `);
+
+      if (dbOnline.rows && dbOnline.rows.length > 0) {
+        for (const r of dbOnline.rows) {
+          const existing = users.find((u) => u.id === r.id);
+          if (existing) {
+            existing.isOnline = true;
+            existing.displayName = r.display_name || existing.displayName;
+            existing.gender = r.gender === 'Female' ? 'Female' : 'Male';
+          } else {
+            users.unshift({
+              id: r.id,
+              phoneNumber: r.phone_number,
+              displayName: r.display_name || 'User',
+              gender: r.gender === 'Female' ? 'Female' : 'Male',
+              dob: r.date_of_birth ? new Date(r.date_of_birth).toISOString().split('T')[0] : '2000-01-01',
+              age: r.age || 24,
+              preferredLanguage: r.preferred_language_id === 'en' ? 'English' : 'Telugu',
+              secondaryLanguages: ['English'],
+              avatarId: r.avatar_id || (r.gender === 'Female' ? 'av_swapna' : 'av_aman'),
+              avatarUrl: r.svg_url || (r.gender === 'Female' ? 'https://api.dicebear.com/7.x/lorelei/svg?seed=Swapna&backgroundColor=ffd5dc' : PREDEFINED_AVATARS[0].svgUrl),
+              status: r.status || 'Active',
+              isOnline: true,
+              isBusy: false,
+              coinsBalance: Number(r.balance_coins) || 500,
+              totalCallsMade: 0,
+              totalCallsReceived: 0,
+              totalCallDurationMins: 0,
+              earnedCoins: 0,
+              withdrawnINR: 0,
+              audioRatePerMin: 10,
+              videoRatePerMin: 20,
+              joinedDate: 'Registered',
+              lastActive: 'Just now',
+              bio: '',
+            });
+          }
+        }
+      }
+    } catch (e: any) {
+      console.warn('Online users query notice:', e.message);
+    }
+
     const myUser = myId ? users.find((u) => u.id === myId) : null;
 
     // Strictly filter active online users
@@ -507,13 +650,55 @@ async function startServer() {
   // -------------------------------------------------------------------------
   // 3. WEBRTC & CALLING SESSIONS + SERVER-AUTHORITATIVE BILLING
   // -------------------------------------------------------------------------
-  app.post('/api/v1/calls/initiate', (req, res) => {
+  app.post('/api/v1/calls/initiate', async (req, res) => {
     const { calleeId, type, callerId } = req.body as { calleeId: string; type: 'audio' | 'video'; callerId?: string };
     const resolvedCallerId = callerId || (req.headers['x-user-id'] as string) || (currentUser ? currentUser.id : '');
     const caller = users.find((u) => u.id === resolvedCallerId) || currentUser;
     if (!caller) return res.status(401).json({ error: 'Caller profile not found. Please log in.' });
 
-    const callee = users.find((u) => u.id === calleeId);
+    let callee = users.find((u) => u.id === calleeId);
+    if (!callee) {
+      // Look up callee in DB
+      try {
+        const calleeDbRes = await pool.query(`
+          SELECT u.id, u.phone_number, p.display_name, p.gender, p.avatar_id, a.svg_url, p.is_online, p.last_seen_at
+          FROM users u
+          JOIN user_profiles p ON u.id = p.user_id
+          LEFT JOIN avatars a ON p.avatar_id = a.id
+          WHERE u.id = $1
+        `, [calleeId]);
+        if (calleeDbRes.rows && calleeDbRes.rows.length > 0) {
+          const cr = calleeDbRes.rows[0];
+          callee = {
+            id: cr.id,
+            phoneNumber: cr.phone_number,
+            displayName: cr.display_name || 'User',
+            gender: cr.gender === 'Female' ? 'Female' : 'Male',
+            dob: '2000-01-01',
+            age: 24,
+            preferredLanguage: 'Telugu',
+            secondaryLanguages: ['English'],
+            avatarId: cr.avatar_id || 'av_swapna',
+            avatarUrl: cr.svg_url || PREDEFINED_AVATARS[0].svgUrl,
+            status: 'Active',
+            isOnline: true,
+            isBusy: false,
+            coinsBalance: 500,
+            totalCallsMade: 0,
+            totalCallsReceived: 0,
+            totalCallDurationMins: 0,
+            earnedCoins: 0,
+            withdrawnINR: 0,
+            audioRatePerMin: 10,
+            videoRatePerMin: 20,
+            joinedDate: 'Registered',
+            lastActive: 'Just now',
+            bio: '',
+          };
+          users.push(callee);
+        }
+      } catch {}
+    }
     if (!callee) return res.status(404).json({ error: 'Target user not found' });
 
     if (caller.id === callee.id) {
@@ -523,6 +708,17 @@ async function startServer() {
     if (blockedUserIds.includes(calleeId)) {
       return res.status(403).json({ error: 'You cannot call a blocked user.' });
     }
+
+    // Check if callee is active recently in DB
+    try {
+      const calleeDb = await pool.query('SELECT is_online, last_seen_at FROM user_profiles WHERE user_id = $1', [calleeId]);
+      if (calleeDb.rows && calleeDb.rows.length > 0) {
+        const isRecentlyActive = calleeDb.rows[0].is_online || (calleeDb.rows[0].last_seen_at && (Date.now() - new Date(calleeDb.rows[0].last_seen_at).getTime() < 180000));
+        if (isRecentlyActive) {
+          callee.isOnline = true;
+        }
+      }
+    } catch {}
 
     if (!callee.isOnline) {
       return res.status(409).json({ error: 'User is currently offline. Wait until they connect or call another available user.' });
@@ -569,7 +765,64 @@ async function startServer() {
     };
 
     liveCalls.unshift(session);
+
+    // Persist session to PostgreSQL
+    try {
+      await dbQuery(`
+        INSERT INTO call_sessions (id, caller_id, callee_id, type, status, ringing_started_at)
+        VALUES ($1, $2, $3, $4, 'ringing', NOW())
+        ON CONFLICT (id) DO NOTHING;
+      `, [session.id, caller.id, callee.id, type]);
+    } catch {}
+
     res.json({ success: true, session });
+  });
+
+  // HTTP Signaling Fallback Endpoints
+  app.post('/api/v1/calls/signal', async (req, res) => {
+    const { callId, fromUserId, toUserId, type, payload } = req.body;
+    if (!callId || !toUserId || !type) {
+      return res.status(400).json({ error: 'Missing signal parameters' });
+    }
+
+    // Try WebSocket direct delivery
+    signalingService.deliverToUser(toUserId, {
+      type,
+      callId,
+      callerId: fromUserId,
+      targetUserId: toUserId,
+      ...payload,
+    });
+
+    // Also persist to PostgreSQL
+    try {
+      await pool.query(`
+        INSERT INTO call_signals (call_id, from_user_id, to_user_id, type, payload)
+        VALUES ($1, $2, $3, $4, $5);
+      `, [callId, fromUserId || '', toUserId, type, JSON.stringify(payload || {})]);
+    } catch (e: any) {
+      console.warn('Call signal insert notice:', e.message);
+    }
+
+    return res.json({ success: true });
+  });
+
+  app.get('/api/v1/calls/signals/pending', async (req, res) => {
+    const userId = (req.query.userId as string) || (req.headers['x-user-id'] as string);
+    if (!userId) return res.json({ signals: [] });
+
+    try {
+      const dbSignals = await pool.query(`
+        SELECT id, call_id, from_user_id, to_user_id, type, payload, created_at
+        FROM call_signals
+        WHERE to_user_id = $1 AND created_at > NOW() - INTERVAL '15 seconds'
+        ORDER BY id ASC
+      `, [userId]);
+
+      return res.json({ signals: dbSignals.rows || [] });
+    } catch (e: any) {
+      return res.json({ signals: [] });
+    }
   });
 
   // Random Stranger Match
@@ -802,73 +1055,27 @@ async function startServer() {
     });
   });
 
-  // -------------------------------------------------------------------------
-  // 4. WALLET, PAYMENTS & CREATOR WITHDRAWALS
-  // -------------------------------------------------------------------------
-  app.get('/api/v1/wallet', (req, res) => {
-    res.json({
-      balance: currentUser.coinsBalance,
-      transactions: walletTransactions,
-      packages: coinPackages,
-    });
-  });
-
-  app.post('/api/v1/wallet/buy-coins', (req, res) => {
-    const { packageId, paymentMethod = 'UPI' } = req.body;
-    const pkg = coinPackages.find((p) => p.id === packageId);
-    if (!pkg) return res.status(404).json({ error: 'Package not found' });
-
-    const orderId = 'PAY' + (1000 + payments.length + 1);
-    const newPayment: PaymentOrder = {
-      orderId,
-      userId: currentUser.id,
-      userName: currentUser.displayName,
-      packageId: pkg.id,
-      amountINR: pkg.priceINR,
-      coins: pkg.coins,
-      status: 'Success',
-      paymentMethod,
-      timestamp: new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) + ' ' + new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      transactionRef: `${paymentMethod.toUpperCase()}/MATLADUKO_${Date.now()}`,
-    };
-
-    payments.unshift(newPayment);
-
-    // Credit coins immediately
-    currentUser.coinsBalance += pkg.coins;
-
-    walletTransactions.unshift({
-      id: 'TX_' + Date.now(),
-      userId: currentUser.id,
-      type: 'CREDIT_PURCHASE',
-      amountCoins: pkg.coins,
-      balanceAfter: currentUser.coinsBalance,
-      referenceId: orderId,
-      description: `Purchased ${pkg.coins} Coins (${paymentMethod})`,
-      createdAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-    });
-
-    res.json({
-      success: true,
-      order: newPayment,
-      newBalance: currentUser.coinsBalance,
-    });
-  });
-
   app.get('/api/v1/creator/dashboard', (req, res) => {
-    const withdrawableINR = Math.floor(currentUser.earnedCoins * config.coinToInrRate);
+    const userId = (req.headers['x-user-id'] as string) || (req.query.userId as string);
+    const targetUser = userId ? users.find((u) => u.id === userId) || currentUser : currentUser;
+    if (!targetUser) return res.status(401).json({ error: 'User not found' });
+    const withdrawableINR = Math.floor((targetUser.earnedCoins || 0) * config.coinToInrRate);
     res.json({
-      totalEarnedCoins: currentUser.earnedCoins,
-      availableCoins: currentUser.earnedCoins,
+      totalEarnedCoins: targetUser.earnedCoins || 0,
+      availableCoins: targetUser.earnedCoins || 0,
       withdrawableINR,
       minWithdrawalINR: config.minWithdrawalAmountINR,
       coinToInrRate: config.coinToInrRate,
-      withdrawals: withdrawals.filter((w) => w.userId === currentUser.id || w.userName === currentUser.displayName),
+      withdrawals: withdrawals.filter((w) => w.userId === targetUser.id || w.userName === targetUser.displayName),
     });
   });
 
   app.post('/api/v1/creator/withdraw', (req, res) => {
-    const { amountINR, payoutMethod, accountDetails } = req.body;
+    const { amountINR, payoutMethod, accountDetails, userId } = req.body;
+    const resolvedUserId = userId || (req.headers['x-user-id'] as string) || (currentUser ? currentUser.id : '');
+    const targetUser = users.find((u) => u.id === resolvedUserId) || currentUser;
+    if (!targetUser) return res.status(401).json({ error: 'User not found' });
+
     const amount = Number(amountINR);
 
     if (isNaN(amount) || amount < config.minWithdrawalAmountINR) {
@@ -876,14 +1083,14 @@ async function startServer() {
     }
 
     const coinsRequired = Math.ceil(amount / config.coinToInrRate);
-    if (currentUser.earnedCoins < coinsRequired) {
+    if ((targetUser.earnedCoins || 0) < coinsRequired) {
       return res.status(400).json({ error: `Insufficient earned coins. You need ${coinsRequired} coins for ₹${amount}.` });
     }
 
     const newWd: WithdrawalRequest = {
       id: 'WD' + (1000 + withdrawals.length + 1),
-      userId: currentUser.id,
-      userName: currentUser.displayName,
+      userId: targetUser.id,
+      userName: targetUser.displayName,
       amountINR: amount,
       coinsDeducted: coinsRequired,
       payoutMethod: payoutMethod || 'Bank Transfer',
@@ -892,14 +1099,14 @@ async function startServer() {
       date: new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
     };
 
-    currentUser.earnedCoins -= coinsRequired;
+    targetUser.earnedCoins = (targetUser.earnedCoins || 0) - coinsRequired;
     withdrawals.unshift(newWd);
 
     res.json({
       success: true,
       message: 'Withdrawal request submitted for Admin verification and automated payout.',
       withdrawal: newWd,
-      remainingEarnedCoins: currentUser.earnedCoins,
+      remainingEarnedCoins: targetUser.earnedCoins,
     });
   });
 

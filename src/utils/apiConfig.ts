@@ -31,14 +31,18 @@ export function getApiBaseUrl(): string {
 }
 
 export function getSignalingUrl(): string {
-  const base = getApiBaseUrl();
-  if (base) {
-    const wsProto = base.startsWith('https') ? 'wss:' : 'ws:';
-    const host = base.replace(/^https?:\/\//, '');
-    return `${wsProto}//${host}/ws/signaling`;
+  if (typeof window !== 'undefined') {
+    // If running strictly on local dev machine
+    if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      return `${protocol}//${window.location.host}/ws/signaling`;
+    }
   }
-  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  return `${protocol}//${window.location.host}/ws/signaling`;
+  // Connect all mobile devices, emulators, and web previews to canonical Cloud signaling hub
+  const base = getApiBaseUrl() || CLOUD_BACKEND_URL;
+  const wsProto = base.startsWith('https') ? 'wss:' : 'ws:';
+  const host = base.replace(/^https?:\/\//, '');
+  return `${wsProto}//${host}/ws/signaling`;
 }
 
 export async function apiFetch(endpoint: string, options: RequestInit = {}): Promise<Response> {

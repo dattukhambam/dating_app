@@ -34,6 +34,8 @@ export interface SignalingMessage {
     id: string;
     displayName: string;
     avatarUrl: string;
+    gender?: string;
+    phoneNumber?: string;
   };
 }
 
@@ -109,6 +111,13 @@ class SignalingService {
           connectedAt: new Date(),
         });
 
+        // Update database presence
+        dbQuery(`
+          UPDATE user_profiles
+          SET is_online = true, last_seen_at = NOW()
+          WHERE user_id = $1;
+        `, [msg.userId]).catch(() => {});
+
         this.presenceCallback?.(msg.userId, true, msg.callerInfo);
 
         ws.send(JSON.stringify({
@@ -125,28 +134,13 @@ class SignalingService {
         const { targetUserId, callType, callId, callerInfo } = msg;
         if (!targetUserId || !callId) return;
 
+        // Persist signal in DB
+        dbQuery(`
+          INSERT INTO call_signals (call_id, from_user_id, to_user_id, type, payload)
+          VALUES ($1, $2, $3, 'CALL_INITIATE', $4);
+        `, [callId, msg.userId || '', targetUserId, JSON.stringify({ callType, callerInfo })]).catch(() => {});
+
         const callee = this.clients.get(targetUserId);
-
-        // Check if callee is busy or offline
-        if (!callee || callee.ws.readyState !== WebSocket.OPEN) {
-          ws.send(JSON.stringify({
-            type: 'CALL_FAILED',
-            callId,
-            reason: 'CALLEE_OFFLINE',
-            message: 'User is currently offline.',
-          }));
-          return;
-        }
-
-        if (callee.isBusy) {
-          ws.send(JSON.stringify({
-            type: 'CALL_FAILED',
-            callId,
-            reason: 'CALLEE_BUSY',
-            message: 'User is on another call.',
-          }));
-          return;
-        }
 
         // Record active call in memory & DB
         this.activeCalls.set(callId, {
@@ -160,7 +154,7 @@ class SignalingService {
         // Set busy flags
         const callerClient = msg.userId ? this.clients.get(msg.userId) : null;
         if (callerClient) callerClient.isBusy = true;
-        callee.isBusy = true;
+        if (callee) callee.isBusy = true;
 
         // Persist session to PostgreSQL
         try {
@@ -173,13 +167,15 @@ class SignalingService {
           console.warn('PostgreSQL record call error (non-fatal):', dbErr.message);
         }
 
-        // Notify callee with INCOMING_CALL
-        callee.ws.send(JSON.stringify({
-          type: 'INCOMING_CALL',
-          callId,
-          callType: callType || 'video',
-          caller: callerInfo || { id: msg.userId, displayName: 'Telugu Caller' },
-        }));
+        // Notify callee with INCOMING_CALL if connected via WS
+        if (callee && callee.ws.readyState === WebSocket.OPEN) {
+          callee.ws.send(JSON.stringify({
+            type: 'INCOMING_CALL',
+            callId,
+            callType: callType || 'video',
+            caller: callerInfo || { id: msg.userId, displayName: 'Telugu Caller' },
+          }));
+        }
 
         // Notify caller that ringing has started
         ws.send(JSON.stringify({
@@ -194,6 +190,12 @@ class SignalingService {
 
       case 'CALL_OFFER': {
         const { targetUserId, callId, sdp } = msg;
+        if (targetUserId && callId) {
+          dbQuery(`
+            INSERT INTO call_signals (call_id, from_user_id, to_user_id, type, payload)
+            VALUES ($1, $2, $3, 'CALL_OFFER', $4);
+          `, [callId, msg.userId || '', targetUserId, JSON.stringify({ sdp })]).catch(() => {});
+        }
         const target = targetUserId ? this.clients.get(targetUserId) : null;
         if (target && target.ws.readyState === WebSocket.OPEN) {
           target.ws.send(JSON.stringify({
@@ -211,6 +213,13 @@ class SignalingService {
         const call = callId ? this.activeCalls.get(callId) : null;
         if (call) {
           call.connectedAt = Date.now();
+        }
+
+        if (targetUserId && callId) {
+          dbQuery(`
+            INSERT INTO call_signals (call_id, from_user_id, to_user_id, type, payload)
+            VALUES ($1, $2, $3, 'CALL_ANSWER', $4);
+          `, [callId, msg.userId || '', targetUserId, JSON.stringify({ sdp })]).catch(() => {});
         }
 
         // Update database status to 'connected'
@@ -348,6 +357,11 @@ class SignalingService {
     }
 
     this.clients.delete(userId);
+    dbQuery(`
+      UPDATE user_profiles
+      SET is_online = false, last_seen_at = NOW()
+      WHERE user_id = $1;
+    `, [userId]).catch(() => {});
     this.presenceCallback?.(userId, false);
     this.broadcastPresence();
   }
@@ -408,6 +422,15 @@ class SignalingService {
     }
 
     this.cleanupCall(callId, reason);
+  }
+
+  public deliverToUser(targetUserId: string, message: any): boolean {
+    const client = this.clients.get(targetUserId);
+    if (client && client.ws.readyState === WebSocket.OPEN) {
+      client.ws.send(JSON.stringify(message));
+      return true;
+    }
+    return false;
   }
 }
 
