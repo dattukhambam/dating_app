@@ -53,7 +53,7 @@ import {
 } from '../../data/mockDatabase';
 import { CallNoiseBanner, CallAudioStatusPill, AudioSettingsModal } from './CallNoiseWarning';
 import { RealtimeCallWaveform } from './RealtimeCallWaveform';
-import { MatladukoWebRtcManager } from '../../utils/webrtcClient';
+import { MuchataWebRtcManager } from '../../utils/webrtcClient';
 import { apiFetch } from '../../utils/apiConfig';
 
 interface MobileAppProps {
@@ -134,6 +134,17 @@ export const MobileApp: React.FC<MobileAppProps> = ({
     };
   };
 
+  const saveUserSession = (userProfile: UserProfile) => {
+    try {
+      localStorage.setItem('matladuko_user_profile', JSON.stringify(userProfile));
+      localStorage.setItem('matladuko_user_logged_in', 'true');
+      sessionStorage.setItem('matladuko_user_profile', JSON.stringify(userProfile));
+      sessionStorage.setItem('matladuko_user_logged_in', 'true');
+    } catch (e) {
+      console.warn('Storage save error:', e);
+    }
+  };
+
   const isPreviouslyLoggedIn = typeof window !== 'undefined' && Boolean(
     (localStorage.getItem('matladuko_user_logged_in') === 'true' || sessionStorage.getItem('matladuko_user_logged_in') === 'true') &&
     getStoredUser().id &&
@@ -146,7 +157,9 @@ export const MobileApp: React.FC<MobileAppProps> = ({
   // Online users & filters
   const [onlineList, setOnlineList] = useState<UserProfile[]>([]);
   const [languageFilter, setLanguageFilter] = useState<string>('All');
-  const [genderFilter, setGenderFilter] = useState<string>('All');
+  const [genderFilter, setGenderFilter] = useState<string>(() => {
+    return getStoredUser().gender === 'Female' ? 'Male' : 'Female';
+  });
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [selectedUserDetail, setSelectedUserDetail] = useState<UserProfile | null>(null);
 
@@ -212,7 +225,8 @@ export const MobileApp: React.FC<MobileAppProps> = ({
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   const localVideoRef = useRef<HTMLVideoElement | null>(null);
   const remoteVideoRef = useRef<HTMLVideoElement | null>(null);
-  const webrtcManagerRef = useRef<MatladukoWebRtcManager | null>(null);
+  const remoteAudioRef = useRef<HTMLAudioElement | null>(null);
+  const webrtcManagerRef = useRef<MuchataWebRtcManager | null>(null);
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
@@ -235,16 +249,32 @@ export const MobileApp: React.FC<MobileAppProps> = ({
     }
   }, [remoteStream, currentScreen]);
 
+  // Bind remote audio stream whenever it updates or screen switches - essential for audio calls!
+  useEffect(() => {
+    if (remoteAudioRef.current && remoteStream) {
+      remoteAudioRef.current.srcObject = remoteStream;
+      remoteAudioRef.current.muted = !isSpeakerOn;
+      remoteAudioRef.current.play().catch((err) => {
+        console.warn('Remote audio autoplay handling:', err);
+      });
+    }
+  }, [remoteStream, currentScreen, isSpeakerOn]);
+
   // Initialize WebRTC Signaling connection
   useEffect(() => {
     if (!isLoggedIn || !user.id) return;
 
-    const mgr = new MatladukoWebRtcManager({
+    const mgr = new MuchataWebRtcManager({
       onRemoteStream: (stream) => {
         setRemoteStream(stream);
         if (remoteVideoRef.current) {
           remoteVideoRef.current.srcObject = stream;
           remoteVideoRef.current.play().catch(() => {});
+        }
+        if (remoteAudioRef.current) {
+          remoteAudioRef.current.srcObject = stream;
+          remoteAudioRef.current.muted = !isSpeakerOn;
+          remoteAudioRef.current.play().catch(() => {});
         }
       },
       onLocalStream: (stream) => {
@@ -300,13 +330,13 @@ export const MobileApp: React.FC<MobileAppProps> = ({
     return () => {
       mgr.cleanup();
     };
-  }, [isLoggedIn, user.id, user.displayName, user.avatarUrl, user.gender]);
+  }, [isLoggedIn, user.id, user.displayName, user.avatarUrl, user.gender, isSpeakerOn]);
 
   // Fetch real registered online users from backend
   const fetchUsers = async () => {
     try {
       const res = await apiFetch(
-        `/api/v1/users/online?language=${languageFilter}&gender=${genderFilter}&tab=${currentScreen === 'favorites' ? 'favorites' : 'all'}&currentUserId=${user.id}`,
+        `/api/v1/users/online?language=${languageFilter}&gender=${genderFilter}&tab=${currentScreen === 'favorites' ? 'favorites' : 'all'}&currentUserId=${user.id}&myGender=${user.gender}`,
         {
           headers: { 'x-user-id': user.id },
         }
@@ -367,7 +397,7 @@ export const MobileApp: React.FC<MobileAppProps> = ({
     if (!isLoggedIn || !user.id) return;
     const interval = setInterval(() => {
       fetchUsers();
-    }, 4000);
+    }, 2500);
     return () => clearInterval(interval);
   }, [isLoggedIn, user.id, languageFilter, genderFilter, currentScreen]);
 
@@ -584,11 +614,7 @@ export const MobileApp: React.FC<MobileAppProps> = ({
         }
         if (data.user) {
           setUser(data.user);
-          try {
-            sessionStorage.setItem('matladuko_user_profile', JSON.stringify(data.user));
-            localStorage.setItem('matladuko_user_profile', JSON.stringify(data.user));
-            sessionStorage.setItem('matladuko_user_logged_in', 'true');
-          } catch {}
+          saveUserSession(data.user);
           setIsLoggedIn(true);
           showToast(
             lang === 'te'
@@ -609,6 +635,7 @@ export const MobileApp: React.FC<MobileAppProps> = ({
           const parsed = JSON.parse(stored);
           if (parsed.phoneNumber === inputPhone) {
             setUser(parsed);
+            saveUserSession(parsed);
             setIsLoggedIn(true);
             setCurrentScreen('online_users');
             return;
@@ -644,11 +671,7 @@ export const MobileApp: React.FC<MobileAppProps> = ({
       const data = await res.json();
       if (res.ok && data.user) {
         setUser(data.user);
-        try {
-          sessionStorage.setItem('matladuko_user_profile', JSON.stringify(data.user));
-          localStorage.setItem('matladuko_user_profile', JSON.stringify(data.user));
-          sessionStorage.setItem('matladuko_user_logged_in', 'true');
-        } catch {}
+        saveUserSession(data.user);
         setIsLoggedIn(true);
         showToast(
           lang === 'te'
@@ -690,11 +713,7 @@ export const MobileApp: React.FC<MobileAppProps> = ({
       bio: `Namaskaram! ${setupName.trim()} ready to talk in ${setupLang}!`,
     };
     setUser(newUser);
-    try {
-      sessionStorage.setItem('matladuko_user_profile', JSON.stringify(newUser));
-      localStorage.setItem('matladuko_user_profile', JSON.stringify(newUser));
-      sessionStorage.setItem('matladuko_user_logged_in', 'true');
-    } catch {}
+    saveUserSession(newUser);
     setIsLoggedIn(true);
     showToast(
       lang === 'te'
@@ -758,6 +777,7 @@ export const MobileApp: React.FC<MobileAppProps> = ({
 
   const handleInitiateCall = async (callee: UserProfile, type: 'audio' | 'video') => {
     setSelectedUserDetail(null);
+
     const requiredRate = type === 'video' ? callee.videoRatePerMin : callee.audioRatePerMin;
 
     if (user.coinsBalance < requiredRate) {
@@ -843,10 +863,13 @@ export const MobileApp: React.FC<MobileAppProps> = ({
   };
 
   const handleRandomCall = async () => {
-    // Select suitable random user of opposite gender who is online and not busy
-    const available = onlineList.filter(
+    // Select suitable random user online and not busy (prefer opposite gender if available)
+    const oppositeGenderAvailable = onlineList.filter(
       (u) => (user.gender === 'Male' ? u.gender === 'Female' : u.gender === 'Male') && u.id !== user.id && !u.isBusy
     );
+    const available = oppositeGenderAvailable.length > 0
+      ? oppositeGenderAvailable
+      : onlineList.filter((u) => u.id !== user.id && !u.isBusy);
 
     if (available.length === 0) {
       showToast(lang === 'te' ? 'ఈ సమయంలో సరిపడే ఆన్‌లైన్ యూజర్లు ఎవరూ లేరు.' : 'No matched users online right now.');
@@ -1037,14 +1060,37 @@ export const MobileApp: React.FC<MobileAppProps> = ({
     showToast('Call declined.');
   };
 
-  // Filtered users: Strictly Opposite Gender and Strictly Online Only
+  // Filtered users: Opposite gender by default, or respect user selected genderFilter
   const displayedUsers = onlineList.filter((u) => {
     if (u.id === user.id) return false;
     if (!u.isOnline) return false;
 
-    // Strict Opposite Gender Rule
-    if (user.gender === 'Male' && u.gender !== 'Female') return false;
-    if (user.gender === 'Female' && u.gender !== 'Male') return false;
+    // Strictly exclude any dummy seed IDs
+    if (
+      u.id.startsWith('USR_SWAPNA') ||
+      u.id.startsWith('USR_PRIYA') ||
+      u.id.startsWith('USR_ANANYA') ||
+      u.id.startsWith('USR_SRAVANI') ||
+      u.id.startsWith('USR_VAMSI') ||
+      u.id.startsWith('USR_KARTHIK') ||
+      u.id.startsWith('USR_SEED')
+    ) return false;
+
+    // Gender filter matching (case-insensitive)
+    const myGender = user.gender?.toLowerCase() || 'male';
+    const theirGender = u.gender?.toLowerCase() || '';
+
+    if (genderFilter === 'Female') {
+      if (theirGender !== 'female') return false;
+    } else if (genderFilter === 'Male') {
+      if (theirGender !== 'male') return false;
+    } else if (genderFilter === 'All') {
+      // Show all users when 'All' chip is tapped
+    } else {
+      // Default: Male caller sees female users, female caller sees male users
+      if (myGender === 'male' && theirGender !== 'female') return false;
+      if (myGender === 'female' && theirGender !== 'male') return false;
+    }
 
     if (searchQuery) {
       const q = searchQuery.toLowerCase();
@@ -1479,7 +1525,7 @@ export const MobileApp: React.FC<MobileAppProps> = ({
                   <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping"></span>
                 </h1>
                 <p className="text-[11px] text-slate-400">
-                  {user.gender === 'Male' ? '👩 ఆన్‌లైన్ స్త్రీ యూజర్లు' : '👨 ఆన్‌లైన్ పురుష కాలర్లు'} ({displayedUsers.length})
+                  {lang === 'te' ? 'ఆన్‌లైన్ యూజర్లు' : 'Online Users'} ({displayedUsers.length})
                 </p>
               </div>
               <div className="flex items-center space-x-2">
@@ -1526,44 +1572,13 @@ export const MobileApp: React.FC<MobileAppProps> = ({
               </div>
             </div>
 
-            {/* Strict Gender Notice Banner */}
-            {user.gender === 'Male' ? (
-              <div className="p-2.5 mb-2.5 rounded-xl bg-slate-900 border border-slate-800 flex items-center justify-between text-[11px]">
-                <div className="flex items-center space-x-2">
-                  <span className="px-2 py-0.5 rounded-full bg-rose-500/20 text-rose-300 font-bold border border-rose-500/30 text-[10px]">
-                    👩 స్త్రీ యూజర్లు మాత్రమే
-                  </span>
-                  <span className="text-slate-300">ఆన్‌లైన్ ఉన్న మహిళలకు మాత్రమే కాల్ చేయవచ్చు</span>
-                </div>
-              </div>
-            ) : (
-              <div className="p-3 mb-2.5 rounded-xl bg-gradient-to-r from-rose-950/70 to-indigo-950/70 border border-rose-500/30 flex items-center justify-between">
-                <div>
-                  <div className="flex items-center space-x-1.5">
-                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
-                    <span className="text-xs font-bold text-white">మీరు ఆన్‌లైన్‌లో ఉన్నారు (Online)</span>
-                  </div>
-                  <p className="text-[10px] text-rose-300 mt-0.5">
-                    పురుష కాలర్లు మీకు కాల్ చేసినప్పుడు కాల్ లిఫ్ట్ చేసి మాట్లాడండి.
-                  </p>
-                </div>
-                <button
-                  onClick={handleIncomingDemoCall}
-                  className="px-2.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-[10px] font-bold flex items-center space-x-1 shadow-md"
-                >
-                  <Phone className="w-3 h-3" />
-                  <span>కాల్ లిఫ్ట్ టెస్ట్</span>
-                </button>
-              </div>
-            )}
-
             {/* Top Pills: Online Users vs Favorites */}
             <div className="flex rounded-xl bg-slate-900 p-1 border border-slate-800 mb-2.5">
               <button
                 onClick={() => setCurrentScreen('online_users')}
                 className="flex-1 py-1.5 rounded-lg text-xs font-bold bg-indigo-600 text-white shadow-xs"
               >
-                {user.gender === 'Male' ? 'ఆన్‌లైన్ స్త్రీలు (Female Users)' : 'కాలర్స్ లిస్ట్ (Callers)'}
+                {strings.onlineUsers}
               </button>
               <button
                 onClick={() => setCurrentScreen('favorites')}
@@ -1574,7 +1589,7 @@ export const MobileApp: React.FC<MobileAppProps> = ({
             </div>
 
             {/* Language filter chips */}
-            <div className="flex items-center space-x-1.5 overflow-x-auto pb-2 scrollbar-none mb-2">
+            <div className="flex items-center space-x-1.5 overflow-x-auto pb-1 scrollbar-none mb-1.5">
               {['All', 'Telugu', 'English', 'Hindi'].map((l) => (
                 <button
                   key={l}
@@ -1590,28 +1605,51 @@ export const MobileApp: React.FC<MobileAppProps> = ({
               ))}
             </div>
 
+            {/* Gender filter chips */}
+            <div className="flex items-center space-x-1.5 overflow-x-auto pb-2 scrollbar-none mb-2">
+              {[
+                { id: 'Female', label: '👩 మహిళలు (Female)' },
+                { id: 'Male', label: '👨 పురుషులు (Male)' },
+                { id: 'All', label: '👥 అందరూ (All)' },
+              ].map((g) => (
+                <button
+                  key={g.id}
+                  onClick={() => setGenderFilter(g.id)}
+                  className={`px-3 py-1 rounded-full text-[11px] font-bold shrink-0 transition ${
+                    genderFilter === g.id
+                      ? 'bg-indigo-600 text-white shadow-sm'
+                      : 'bg-slate-900 text-slate-400 border border-slate-800 hover:border-slate-700'
+                  }`}
+                >
+                  {g.label}
+                </button>
+              ))}
+            </div>
+
             {/* User cards list */}
             <div className="flex-1 overflow-y-auto space-y-2.5 pr-1">
               {displayedUsers.length === 0 ? (
                 <div className="text-center py-10 px-4 space-y-3">
                   <div className="w-16 h-16 rounded-full bg-slate-900 mx-auto flex items-center justify-center text-3xl">
-                    {user.gender === 'Male' ? '👩' : '👨'}
+                    👥
                   </div>
                   <h3 className="text-sm font-bold text-white">
-                    {user.gender === 'Male'
-                      ? 'ఈ సమయంలో ఆన్‌లైన్ స్త్రీ యూజర్లు ఎవరూ లేరు'
-                      : 'మీరు ఆన్‌లైన్‌లో ఉన్నారు. కాల్స్ కోసం వేచి చూస్తున్నారు'}
+                    {lang === 'te' ? 'ఈ సమయంలో ఆన్‌లైన్ యూజర్లు లేరు' : 'No users online right now'}
                   </h3>
-                  <p className="text-xs text-slate-400">
-                    {user.gender === 'Male'
-                      ? 'మరో డివైస్ లేదా బ్రౌజర్ ట్యాబ్‌లో స్త్రీగా రిజిస్టర్ అవ్వండి లేదా రీఫ్రెష్ చేయండి.'
-                      : 'పురుష యూజర్లు కాల్ చేయగానే మీ స్క్రీన్ రింగ్ అవుతుంది మరియు లిఫ్ట్ చేయవచ్చు.'}
+                  <p className="text-xs text-slate-400 leading-relaxed">
+                    {lang === 'te'
+                      ? 'మరో యూజర్ లాగిన్ అవ్వగానే, ఇక్కడ ఆటోమేటిక్‌గా కనిపిస్తారు.'
+                      : 'When another user joins, they will appear here automatically.'}
                   </p>
+                  <div className="flex items-center justify-center gap-2 pt-2">
+                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
+                    <span className="text-[11px] text-emerald-400 font-semibold">{lang === 'te' ? 'ఆటో-రీఫ్రెష్ యాక్టివ్' : 'Auto-refresh active'}</span>
+                  </div>
                   <button
                     onClick={fetchUsers}
-                    className="px-4 py-2 rounded-xl bg-indigo-600 text-white font-bold text-xs"
+                    className="mt-2 px-4 py-2 rounded-xl bg-indigo-600 text-white font-bold text-xs"
                   >
-                    రీఫ్రెష్ చేయండి (Refresh)
+                    {lang === 'te' ? 'రీఫ్రెష్ చేయండి' : 'Refresh Now'}
                   </button>
                 </div>
               ) : (
@@ -1650,7 +1688,7 @@ export const MobileApp: React.FC<MobileAppProps> = ({
                       </div>
                     </div>
 
-                    {/* Audio and Video Call triggers */}
+                    {/* Direct Audio and Video Call triggers */}
                     <div className="flex items-center space-x-1.5 shrink-0 pl-2">
                       <button
                         id={`btn-audio-call-${u.id}`}
@@ -1684,7 +1722,7 @@ export const MobileApp: React.FC<MobileAppProps> = ({
               )}
             </div>
 
-            {/* Floating Random Call Button */}
+            {/* Random Call Button for everyone */}
             <div className="pt-2">
               <button
                 id="btn-random-call"
@@ -2159,16 +2197,9 @@ export const MobileApp: React.FC<MobileAppProps> = ({
 
               {/* Real-time amplitude-based waveform visualizer */}
               <RealtimeCallWaveform
-                ambientNoiseDb={ambientNoiseDb}
-                micSensitivity={micSensitivity}
                 isMuted={isMuted}
-                isHeadphonesOn={isHeadphonesOn}
                 strings={strings}
                 lang={lang}
-                onAdjustSensitivity={(delta) => {
-                  setMicSensitivity((prev) => Math.max(20, Math.min(100, prev + delta)));
-                }}
-                onOpenAudioSettings={() => setIsAudioSettingsOpen(true)}
               />
 
               {/* Subtle visual notification when ambient noise exceeds 75 dB */}
@@ -2191,6 +2222,20 @@ export const MobileApp: React.FC<MobileAppProps> = ({
                 )}
               </AnimatePresence>
             </div>
+
+            {/* Audio stream playback specifically for audio call */}
+            <audio
+              ref={(el) => {
+                if (el && remoteStream && el.srcObject !== remoteStream) {
+                  el.srcObject = remoteStream;
+                  el.muted = !isSpeakerOn;
+                  el.play().catch(() => {});
+                }
+              }}
+              autoPlay
+              playsInline
+              style={{ display: 'none' }}
+            />
 
             {/* Bottom Controls */}
             <div className="flex items-center justify-around bg-slate-900/90 backdrop-blur-md py-3 px-5 rounded-2xl border border-slate-800 z-20">
@@ -2969,6 +3014,14 @@ export const MobileApp: React.FC<MobileAppProps> = ({
           </button>
         </div>
       )}
+
+      {/* Hidden WebRTC Remote Audio Player */}
+      <audio
+        ref={remoteAudioRef}
+        autoPlay
+        playsInline
+        style={{ position: 'fixed', opacity: 0, pointerEvents: 'none', bottom: 0, right: 0, width: '1px', height: '1px' }}
+      />
 
       {/* Audio & Ambient Noise Controls Modal */}
       <AudioSettingsModal

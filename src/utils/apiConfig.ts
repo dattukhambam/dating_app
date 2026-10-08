@@ -1,16 +1,15 @@
 // API & WebSocket Configuration for Web and Capacitor Android APK
 
-export const CLOUD_BACKEND_URL = 'https://ais-dev-mxfsjmfa6ilx6ehelzi7c4-500444226681.asia-southeast1.run.app';
-export const PREVIEW_BACKEND_URL = 'https://ais-pre-mxfsjmfa6ilx6ehelzi7c4-500444226681.asia-southeast1.run.app';
+export const CLOUD_BACKEND_URL = 'https://ais-dev-bdimk74tfela66lapwpqiu-103507214601.asia-southeast1.run.app';
+export const PREVIEW_BACKEND_URL = 'https://ais-pre-bdimk74tfela66lapwpqiu-103507214601.asia-southeast1.run.app';
 
 export function isCapacitorApp(): boolean {
   if (typeof window === 'undefined') return false;
   return (
     window.location.protocol === 'capacitor:' ||
     window.location.protocol === 'file:' ||
-    (window.location.hostname === 'localhost' && !window.location.port) ||
     Boolean((window as any).Capacitor?.isNativePlatform?.()) ||
-    Boolean((window as any).Capacitor)
+    Boolean((window as any).Capacitor?.isPluginAvailable?.('App'))
   );
 }
 
@@ -20,19 +19,24 @@ export function getApiBaseUrl(): string {
   if (custom && custom.trim()) {
     return custom.trim().replace(/\/$/, '');
   }
-  // When running directly on the web app on Cloud Run or Vite dev server
-  if (typeof window !== 'undefined' && (window.location.hostname.includes('run.app') || window.location.port === '3000')) {
-    return '';
-  }
+  // When running on native Capacitor app (APK), use canonical cloud backend
   if (isCapacitorApp()) {
     return CLOUD_BACKEND_URL;
   }
+  // When running directly in mobile browser or PWA installed on phone
+  if (typeof window !== 'undefined' && window.location.origin && !window.location.origin.includes('localhost')) {
+    return window.location.origin;
+  }
+  // Local development fallback
   return '';
 }
 
 export function getSignalingUrl(): string {
+  if (typeof window !== 'undefined' && window.location.origin && !window.location.origin.includes('localhost') && !isCapacitorApp()) {
+    const wsProto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    return `${wsProto}//${window.location.host}/ws/signaling`;
+  }
   if (typeof window !== 'undefined') {
-    // If running strictly on local dev machine
     if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       return `${protocol}//${window.location.host}/ws/signaling`;

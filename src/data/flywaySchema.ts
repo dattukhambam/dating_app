@@ -1,6 +1,6 @@
 export const FLYWAY_SQL_V1 = `-- ==============================================================================
--- FLYWAY MIGRATION V1__init_matladuko_schema.sql
--- Production Database Schema for Matladuko (Telugu Stranger Social Calling App)
+-- FLYWAY MIGRATION V1__init_muchata_schema.sql
+-- Production Database Schema for Muchata (Telugu Stranger Social Calling App)
 -- PostgreSQL 16+ / CockroachDB / Cloud SQL compatible
 -- Modular Monolith Architecture with strict financial invariants & foreign keys
 -- ==============================================================================

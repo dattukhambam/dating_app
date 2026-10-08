@@ -73,10 +73,10 @@ export interface LanguageStrings {
 }
 
 export const STRINGS_TE: LanguageStrings = {
-  appName: 'మాట్లాడుకో (Matladuko)',
-  appSubtitle: 'తెలుగువారి ఆత్మీయ సంభాషణలు',
-  tagline: 'కొత్తవారితో మాట్లాడండి',
-  subTagline: 'నిజమైన స్నేహాలు • స్వచ్ఛమైన తెలుగు కబుర్లు',
+  appName: 'ముచ్చట (Muchata)',
+  appSubtitle: 'తెలుగువారి ఆత్మీయ సంభాషణలు & స్నేహాలు',
+  tagline: 'కొత్తవారితో మనసారా మాట్లాడండి',
+  subTagline: 'స్వచ్ఛమైన తెలుగు ముచ్చట్లు • సరికొత్త స్నేహాలు',
   getStarted: 'ప్రారంభించండి',
   safeSecure: 'సురక్షితం • ప్రైవసీ రక్షణ • గౌరవప్రదం',
   welcomeBack: 'మళ్ళీ స్వాగతం!',
@@ -147,10 +147,10 @@ export const STRINGS_TE: LanguageStrings = {
 };
 
 export const STRINGS_EN: LanguageStrings = {
-  appName: 'Matladuko',
-  appSubtitle: 'Telugu Stranger Calling & Dating',
-  tagline: 'Talk to New People',
-  subTagline: 'Real Conversations • Real Connections',
+  appName: 'Muchata',
+  appSubtitle: 'Telugu Social Voice & Video Calling',
+  tagline: 'Talk to New People Heartfully',
+  subTagline: 'Real Conversations • Authentic Friendships',
   getStarted: 'Get Started',
   safeSecure: 'Safe • Secure • Respectful',
   welcomeBack: 'Welcome Back',

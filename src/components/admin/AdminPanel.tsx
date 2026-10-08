@@ -354,7 +354,7 @@ export const AdminPanel: React.FC = () => {
                 <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-rose-500 to-indigo-500 flex items-center justify-center shadow-lg">
                   <PhoneCall className="w-5 h-5 text-white" />
                 </div>
-                <span className="text-xl font-black text-white">Matladuko Admin</span>
+                <span className="text-xl font-black text-white">Muchata Admin</span>
               </div>
               <p className="text-xs text-rose-400 font-semibold uppercase tracking-wider mb-6">
                 Manage • Monitor • Grow (తెలుగు అడ్మిన్ ప్యానెల్)
@@ -466,7 +466,7 @@ export const AdminPanel: React.FC = () => {
                 <PhoneCall className="w-4 h-4 text-white" />
               </div>
               <div>
-                <h1 className="text-sm font-black text-white tracking-tight">Matladuko</h1>
+                <h1 className="text-sm font-black text-white tracking-tight">Muchata</h1>
                 <p className="text-[10px] text-rose-400 font-semibold uppercase">Admin Panel</p>
               </div>
             </div>
@@ -665,7 +665,7 @@ export const AdminPanel: React.FC = () => {
               {activeTab.replace('_', ' ')}
             </h2>
             <span className="text-[11px] text-slate-400 hidden sm:inline">
-              Matladuko Production Infrastructure
+              Muchata Production Infrastructure
             </span>
           </div>
 

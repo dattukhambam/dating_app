@@ -3,17 +3,22 @@ import dotenv from 'dotenv';
 import { PREDEFINED_AVATARS } from '../data/avatars';
 import { INITIAL_CONFIG, INITIAL_COIN_PACKAGES, INITIAL_USERS } from '../data/mockDatabase';
 
-dotenv.config();
+dotenv.config({ override: true });
 
 const { Pool } = pg;
 
 // Helper to sanitize connection config and parse if env vars contain URL string or placeholders
 function buildDbConfig() {
-  let host = process.env.PGHOST || 'db.ntybpccjjbxvdcksnqph.supabase.co';
-  let port = parseInt(process.env.PGPORT || '5432', 10);
+  let host = process.env.PGHOST || 'aws-0-ap-northeast-1.pooler.supabase.com';
+  let port = parseInt(process.env.PGPORT || '6543', 10);
   let database = process.env.PGDATABASE || 'postgres';
-  let user = process.env.PGUSER || 'postgres';
+  let user = process.env.PGUSER || 'postgres.ntybpccjjbxvdcksnqph';
   let rawPassword = process.env.PGPASSWORD || 'Dattu@2542@02';
+
+  // Fix truncated password from environment
+  if (rawPassword === 'Dattu@2542' || !rawPassword || rawPassword.includes('YOUR')) {
+    rawPassword = 'Dattu@2542@02';
+  }
 
   // If host accidentally contains a full URL like postgresql://...
   if (host.includes('://') || host.includes('@')) {
@@ -23,8 +28,15 @@ function buildDbConfig() {
       if (urlMatch[2]) port = parseInt(urlMatch[2], 10);
       if (urlMatch[3]) database = urlMatch[3];
     } else {
-      host = 'db.ntybpccjjbxvdcksnqph.supabase.co';
+      host = 'aws-0-ap-northeast-1.pooler.supabase.com';
     }
+  }
+
+  // If host is the direct domain that only resolves to IPv6, switch to IPv4 pooler
+  if (host === 'db.ntybpccjjbxvdcksnqph.supabase.co') {
+    host = 'aws-0-ap-northeast-1.pooler.supabase.com';
+    port = 6543;
+    if (user === 'postgres') user = 'postgres.ntybpccjjbxvdcksnqph';
   }
 
   // If password is placeholder or empty, fallback to user's real credentials
@@ -38,15 +50,20 @@ function buildDbConfig() {
   }
 
   // If user or database has placeholders
-  if (!user || user.includes('YOUR')) user = 'postgres';
+  if (!user || user.includes('YOUR')) user = 'postgres.ntybpccjjbxvdcksnqph';
   if (!database || database.includes('YOUR')) database = 'postgres';
   if (!host || host.includes('[') || host.includes('YOUR')) {
-    host = 'db.ntybpccjjbxvdcksnqph.supabase.co';
+    host = 'aws-0-ap-northeast-1.pooler.supabase.com';
+  }
+
+  // Pooler requires project ref in username
+  if (host.includes('pooler.supabase.com') && !user.includes('.')) {
+    user = `${user}.ntybpccjjbxvdcksnqph`;
   }
 
   return {
     host,
-    port: isNaN(port) ? 5432 : port,
+    port: isNaN(port) ? 6543 : port,
     database,
     user,
     password: rawPassword,

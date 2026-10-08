@@ -1,6 +1,6 @@
 {
-  "appId": "com.matladuko.app",
-  "appName": "Matladuko",
+  "appId": "com.muchata.app",
+  "appName": "Muchata",
   "webDir": "dist",
   "server": {
     "androidScheme": "https",

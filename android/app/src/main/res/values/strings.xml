@@ -1,7 +1,16 @@
 <?xml version='1.0' encoding='utf-8'?>
 <resources>
-    <string name="app_name">Matladuko</string>
-    <string name="title_activity_main">Matladuko</string>
-    <string name="package_name">com.matladuko.app</string>
-    <string name="custom_url_scheme">com.matladuko.app</string>
+    <string name="app_name">Muchata</string>
+    <string name="title_activity_main">Muchata</string>
+    <string name="package_name">com.muchata.app</string>
+    <string name="custom_url_scheme">com.muchata.app</string>
+    <string name="app_title_te">ముచ్చట (Muchata)</string>
+    <string name="tagline_te">కొత్తవారితో మనసారా మాట్లాడండి</string>
+    <string name="sub_tagline_te">స్వచ్ఛమైన తెలుగు ముచ్చట్లు • సరికొత్త స్నేహాలు</string>
+    <string name="online_users_title">ఆన్‌లైన్ స్నేహితులు</string>
+    <string name="audio_call_btn">ఆడియో కాల్</string>
+    <string name="video_call_btn">వీడియో కాల్</string>
+    <string name="buy_coins_title">కాయిన్స్ కొనండి</string>
+    <string name="wallet_title">వాలెట్ బ్యాలెన్స్</string>
+    <string name="incoming_call_title">ఇన్‌కమింగ్ కాల్</string>
 </resources>

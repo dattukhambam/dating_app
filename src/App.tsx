@@ -180,7 +180,7 @@ export default function App() {
               </div>
               <div>
                 <div className="flex items-center space-x-2">
-                  <span className="text-sm font-black text-white">Matladuko Admin Console</span>
+                  <span className="text-sm font-black text-white">Muchata Admin Console</span>
                   <button
                     onClick={testSupabaseDb}
                     disabled={dbTesting}
@@ -392,7 +392,7 @@ npm install @capacitor/core @capacitor/cli @capacitor/android
                     <div>
                       <span className="text-slate-400">// 2. ప్రాజెక్ట్‌ను ఇనిషియలైజ్ చేసి ప్రొడక్షన్ బిల్డ్ చేయండి:</span>
                       <pre className="text-indigo-400 bg-slate-900 p-2.5 rounded-lg mt-1 overflow-x-auto">
-npx cap init Matladuko com.matladuko.telugu
+npx cap init Muchata com.muchata.telugu
 npm run build
                       </pre>
                     </div>

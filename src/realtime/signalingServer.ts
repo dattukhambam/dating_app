@@ -30,6 +30,7 @@ export interface SignalingMessage {
   sdp?: any;
   candidate?: any;
   reason?: string;
+  callerName?: string;
   callerInfo?: {
     id: string;
     displayName: string;
@@ -86,7 +87,7 @@ class SignalingService {
       ws.send(JSON.stringify({
         type: 'SERVER_READY',
         timestamp: Date.now(),
-        message: 'Connected to Matladuko Realtime WebRTC Signaling Server',
+        message: 'Connected to Muchata Realtime WebRTC Signaling Server',
         iceServers: [
           { urls: 'stun:stun.l.google.com:19302' },
           { urls: 'stun:stun1.l.google.com:19302' },

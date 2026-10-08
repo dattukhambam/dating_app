@@ -1,5 +1,5 @@
 /**
- * Matladuko Production WebRTC Client with WebSocket Signaling & Real-time Media
+ * Muchata Production WebRTC Client with WebSocket Signaling & Real-time Media
  * Supports Two-Device Live Audio & Video Calls with ICE Candidate exchange
  */
 
@@ -16,7 +16,7 @@ export interface WebRtcCallbacks {
   onError?: (errorMsg: string) => void;
 }
 
-export class MatladukoWebRtcManager {
+export class MuchataWebRtcManager {
   private peerConnection: RTCPeerConnection | null = null;
   private ws: WebSocket | null = null;
   private localStream: MediaStream | null = null;
@@ -326,12 +326,24 @@ export class MatladukoWebRtcManager {
       }
     };
 
-    // Remote Track received
+    // Remote Track received - works for audio-only, video-only, and combined
     this.peerConnection.ontrack = (event) => {
-      if (event.streams && event.streams[0]) {
-        this.remoteStream = event.streams[0];
-        this.callbacks.onRemoteStream?.(this.remoteStream);
+      let stream = event.streams && event.streams[0];
+      if (!stream) {
+        if (!this.remoteStream) {
+          this.remoteStream = new MediaStream();
+        }
+        if (event.track) {
+          // Check if track is not already present
+          if (!this.remoteStream.getTracks().some((t) => t.id === event.track.id)) {
+            this.remoteStream.addTrack(event.track);
+          }
+        }
+        stream = this.remoteStream;
+      } else {
+        this.remoteStream = stream;
       }
+      this.callbacks.onRemoteStream?.(this.remoteStream);
     };
 
     this.peerConnection.onconnectionstatechange = () => {
@@ -346,10 +358,19 @@ export class MatladukoWebRtcManager {
 
   private async initLocalMedia(callType: 'audio' | 'video'): Promise<MediaStream> {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-        video: callType === 'video' ? { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: 'user' } : false,
-      });
+      let stream: MediaStream;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+          video: callType === 'video' ? { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: 'user' } : false,
+        });
+      } catch (e) {
+        console.warn('Advanced audio constraints not supported, falling back to simple audio constraints:', e);
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: true,
+          video: callType === 'video',
+        });
+      }
 
       this.localStream = stream;
       this.callbacks.onLocalStream?.(stream);
@@ -472,3 +493,5 @@ export class MatladukoWebRtcManager {
     this.earlyCandidates = [];
   }
 }
+
+export const MatladukoWebRtcManager = MuchataWebRtcManager;

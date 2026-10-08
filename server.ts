@@ -82,6 +82,17 @@ async function loadUsersFromDb() {
     `);
     if (res.rows && res.rows.length > 0) {
       for (const r of res.rows) {
+        const isDummy =
+          r.id.startsWith('USR_SWAPNA') ||
+          r.id.startsWith('USR_PRIYA') ||
+          r.id.startsWith('USR_ANANYA') ||
+          r.id.startsWith('USR_SRAVANI') ||
+          r.id.startsWith('USR_VAMSI') ||
+          r.id.startsWith('USR_KARTHIK') ||
+          r.phone_number?.includes('8888822222') ||
+          r.phone_number?.includes('9999911111');
+        if (isDummy) continue;
+
         const isOnlineNow = Boolean(r.is_online || (r.last_seen_at && (Date.now() - new Date(r.last_seen_at).getTime()) < 180000));
         const existingIdx = users.findIndex((existing) => existing.id === r.id || existing.phoneNumber === r.phone_number);
         const userData: UserProfile = {
@@ -550,23 +561,49 @@ async function startServer() {
     }
 
     const myUser = myId ? users.find((u) => u.id === myId) : null;
+    const callerGender = ((req.query.myGender as string) || myUser?.gender || '').toLowerCase();
 
-    // Strictly filter active online users
-    let list = users.filter((u) => u.isOnline && !blockedUserIds.includes(u.id));
+    // Filter active online users and strictly exclude dummy seed users
+    let list = users.filter((u) => {
+      if (!u.isOnline) return false;
+      if (blockedUserIds.includes(u.id)) return false;
+      // Exclude dummy seed users
+      if (
+        u.id.startsWith('USR_SWAPNA') ||
+        u.id.startsWith('USR_PRIYA') ||
+        u.id.startsWith('USR_ANANYA') ||
+        u.id.startsWith('USR_SRAVANI') ||
+        u.id.startsWith('USR_VAMSI') ||
+        u.id.startsWith('USR_KARTHIK') ||
+        u.id.startsWith('USR_SEED')
+      ) return false;
+      return true;
+    });
+
     if (myId) {
-      list = list.filter((u) => u.id !== myId);
+      list = list.filter((u) => u.id !== myId && u.phoneNumber !== myUser?.phoneNumber);
     }
 
-    // STRICT GENDER MATCHING:
-    // Male user -> STRICTLY Online Female users only!
-    // Female user -> STRICTLY Online Male callers only!
-    if (gender && gender !== 'All') {
-      list = list.filter((u) => u.gender.toLowerCase() === String(gender).toLowerCase());
-    } else if (myUser?.gender === 'Male') {
-      list = list.filter((u) => u.gender === 'Female');
-    } else if (myUser?.gender === 'Female') {
-      list = list.filter((u) => u.gender === 'Male');
+    // Gender Matching:
+    const targetGender = gender && gender !== 'All' ? String(gender).toLowerCase() : null;
+    if (targetGender) {
+      list = list.filter((u) => u.gender?.toLowerCase() === targetGender);
+    } else if (gender === 'All') {
+      // Explicit 'All' requested by client -> show all available users
+    } else if (callerGender === 'male') {
+      // For male users: show female users
+      list = list.filter((u) => u.gender?.toLowerCase() === 'female');
+    } else if (callerGender === 'female') {
+      // For female users: show male users
+      list = list.filter((u) => u.gender?.toLowerCase() === 'male');
     }
+
+    // Sort: real phone registered users first, then by last active
+    list.sort((a, b) => {
+      const aIsReal = a.phoneNumber && !a.id.startsWith('USR_SEED') ? 1 : 0;
+      const bIsReal = b.phoneNumber && !b.id.startsWith('USR_SEED') ? 1 : 0;
+      return bIsReal - aIsReal;
+    });
 
     if (tab === 'favorites') {
       list = list.filter((u) => favoritesUserIds.includes(u.id));
@@ -832,9 +869,9 @@ async function startServer() {
     const caller = users.find((u) => u.id === resolvedCallerId) || currentUser;
     if (!caller) return res.status(401).json({ error: 'Please log in first' });
 
-    // Strict opposite gender candidate matching
+    // Opposite gender preferred, or any available online user
     const targetGender = caller.gender === 'Male' ? 'Female' : 'Male';
-    const candidates = users.filter(
+    let candidates = users.filter(
       (u) =>
         u.id !== caller.id &&
         u.gender === targetGender &&
@@ -843,6 +880,17 @@ async function startServer() {
         u.status === 'Active' &&
         !blockedUserIds.includes(u.id)
     );
+
+    if (candidates.length === 0) {
+      candidates = users.filter(
+        (u) =>
+          u.id !== caller.id &&
+          u.isOnline &&
+          !u.isBusy &&
+          u.status === 'Active' &&
+          !blockedUserIds.includes(u.id)
+      );
+    }
 
     if (candidates.length === 0) {
       return res.status(404).json({ error: `No available ${targetGender} online users found at the moment. Please wait or try again shortly!` });
@@ -1543,7 +1591,7 @@ async function startServer() {
   });
 
   server.listen(PORT, '0.0.0.0', () => {
-    console.log(`Matladuko Server running at http://0.0.0.0:${PORT}`);
+    console.log(`Muchata Server running at http://0.0.0.0:${PORT}`);
 
     // Verify Supabase PostgreSQL 17 database connectivity
     testDbConnection()
